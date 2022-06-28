@@ -27,6 +27,9 @@ package org.graalvm.compiler.truffle.test;
 import static org.graalvm.compiler.core.common.CompilationRequestIdentifier.asCompilationRequest;
 import static org.graalvm.compiler.debug.DebugOptions.DumpOnError;
 
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
 import java.util.function.Supplier;
 
 import org.graalvm.collections.EconomicMap;
@@ -209,6 +212,10 @@ public abstract class PartialEvaluationTest extends TruffleCompilerImplTest {
         return partialEval(compilable, arguments, getCompilationId(compilable));
     }
 
+    protected StructuredGraph partialEval(OptimizedCallTarget compilable, Map<String, String> customOptions) {
+        return partialEval(compilable, new Object[0], getCompilationId(compilable), null, customOptions);
+    }
+
     protected void compile(OptimizedCallTarget compilable, StructuredGraph graph) {
         String methodName = "test";
         CompilationIdentifier compilationId = getCompilationId(compilable);
@@ -223,8 +230,13 @@ public abstract class PartialEvaluationTest extends TruffleCompilerImplTest {
         return partialEval(compilable, arguments, compilationId, listener);
     }
 
-    @SuppressWarnings("try")
     private StructuredGraph partialEval(OptimizedCallTarget compilable, Object[] arguments, CompilationIdentifier compilationId, Graph.NodeEventListener nodeEventListener) {
+        return partialEval(compilable, arguments, compilationId, nodeEventListener, new HashMap<>());
+    }
+
+    @SuppressWarnings("try")
+    private StructuredGraph partialEval(OptimizedCallTarget compilable, Object[] arguments, CompilationIdentifier compilationId, Graph.NodeEventListener nodeEventListener,
+                                        Map<String, String> customOptions) {
         // Executed AST so that all classes are loaded and initialized.
         if (!preventProfileCalls) {
             try {
@@ -242,10 +254,14 @@ public abstract class PartialEvaluationTest extends TruffleCompilerImplTest {
         }
 
         EconomicMap<OptionKey<?>, Object> extra = EconomicMap.create();
-        extra.put(DebugOptions.Dump, ":3");
-        extra.put(DebugOptions.PrintGraphHost, "localhost");
-        extra.put(DebugOptions.PrintGraphPort, 4445);
-        extra.put(DebugOptions.DescriptionStr, "mdlol_je_trouve");
+        if (customOptions.containsKey("dumpGraph")) {
+            extra.put(DebugOptions.Dump, ":3");
+            extra.put(DebugOptions.PrintGraphHost, "localhost");
+            extra.put(DebugOptions.PrintGraphPort, 4445);
+            if (customOptions.containsKey("graphDescription")) {
+                extra.put(DebugOptions.DescriptionStr, customOptions.get("graphDescription"));
+            }
+        }
         OptionValues compileOptions = new OptionValues(getGraalOptions(), extra);
         DebugContext debug = getDebugContext(compileOptions);
         lastDebug = debug;
