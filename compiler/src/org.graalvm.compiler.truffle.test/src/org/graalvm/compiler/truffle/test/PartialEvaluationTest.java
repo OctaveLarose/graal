@@ -29,9 +29,11 @@ import static org.graalvm.compiler.debug.DebugOptions.DumpOnError;
 
 import java.util.function.Supplier;
 
+import org.graalvm.collections.EconomicMap;
 import org.graalvm.compiler.code.CompilationResult;
 import org.graalvm.compiler.core.common.CompilationIdentifier;
 import org.graalvm.compiler.debug.DebugContext;
+import org.graalvm.compiler.debug.DebugOptions;
 import org.graalvm.compiler.graph.Graph;
 import org.graalvm.compiler.graph.Node;
 import org.graalvm.compiler.nodes.ConstantNode;
@@ -39,6 +41,7 @@ import org.graalvm.compiler.nodes.DynamicDeoptimizeNode;
 import org.graalvm.compiler.nodes.FrameState;
 import org.graalvm.compiler.nodes.StructuredGraph;
 import org.graalvm.compiler.nodes.java.MethodCallTargetNode;
+import org.graalvm.compiler.options.OptionKey;
 import org.graalvm.compiler.options.OptionValues;
 import org.graalvm.compiler.phases.PhaseSuite;
 import org.graalvm.compiler.phases.common.DeadCodeEliminationPhase;
@@ -237,9 +240,17 @@ public abstract class PartialEvaluationTest extends TruffleCompilerImplTest {
             } catch (IgnoreError e) {
             }
         }
-        OptionValues options = getGraalOptions();
-        DebugContext debug = getDebugContext(options);
+
+        EconomicMap<OptionKey<?>, Object> extra = EconomicMap.create();
+        extra.put(DebugOptions.Dump, ":3");
+        extra.put(DebugOptions.PrintGraphHost, "localhost");
+        extra.put(DebugOptions.PrintGraphPort, 4445);
+        extra.put(DebugOptions.DescriptionStr, "mdlol_je_trouve");
+        OptionValues compileOptions = new OptionValues(getGraalOptions(), extra);
+        DebugContext debug = getDebugContext(compileOptions);
         lastDebug = debug;
+        debug.getDescription();
+
         try (DebugContext.Scope s = debug.scope("TruffleCompilation", new TruffleDebugJavaMethod(compilable))) {
             SpeculationLog speculationLog = compilable.getCompilationSpeculationLog();
             if (speculationLog != null) {

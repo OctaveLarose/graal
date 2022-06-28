@@ -147,6 +147,9 @@ public class DebugOptions {
     @Option(help = "file:doc-files/PrintGraphHelp.txt", type = OptionType.Debug)
     public static final EnumOptionKey<PrintGraphTarget> PrintGraph = new EnumOptionKey<>(PrintGraphTarget.File);
 
+    @Option(help = "Added by olarose for debugging purposes", type = OptionType.Debug, stability = OptionStability.STABLE)
+    public static final OptionKey<String> DescriptionStr = new OptionKey<>(null);
+
     @Option(help = "Dump a graph even if it has not changed since it was last dumped.  " +
             "Change detection is based on adding and deleting nodes or changing inputs.", type = OptionType.Debug)
     public static final OptionKey<Boolean> PrintUnmodifiedGraphs = new OptionKey<>(true);

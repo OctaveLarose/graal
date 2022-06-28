@@ -44,11 +44,8 @@ import java.util.Collections;
 import java.util.List;
 import java.util.concurrent.TimeUnit;
 
-import org.graalvm.compiler.debug.DebugContext;
+import org.graalvm.compiler.debug.*;
 import org.graalvm.compiler.debug.DebugContext.Builder;
-import org.graalvm.compiler.debug.DebugDumpHandler;
-import org.graalvm.compiler.debug.DebugHandlersFactory;
-import org.graalvm.compiler.debug.GlobalMetrics;
 import org.graalvm.compiler.options.OptionValues;
 import org.graalvm.compiler.serviceprovider.GraalServices;
 import org.graalvm.compiler.serviceprovider.GraalUnsafeAccess;
@@ -452,7 +449,11 @@ public class GraalTest {
         }
         final DebugContext.Description descr;
         if (method == null) {
-            descr = NO_DESCRIPTION;
+            if (DebugOptions.DescriptionStr.getValue(options) != null) {
+                descr = new DebugContext.Description(null, DebugOptions.DescriptionStr.getValue(options));
+            } else {
+                descr = NO_DESCRIPTION;
+            }
         } else {
             descr = new DebugContext.Description(method, id == null ? method.getName() : id);
         }
