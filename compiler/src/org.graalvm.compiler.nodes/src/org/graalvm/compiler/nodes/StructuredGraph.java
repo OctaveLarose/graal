@@ -353,7 +353,7 @@ public final class StructuredGraph extends Graph implements JavaMethodContext {
     private static final AtomicLong uniqueGraphIds = new AtomicLong();
 
     private StartNode start;
-    private final ResolvedJavaMethod rootMethod;
+    public ResolvedJavaMethod rootMethod;
     private final long graphId;
     private final CompilationIdentifier compilationId;
     private final int entryBCI;
@@ -1182,6 +1182,7 @@ public final class StructuredGraph extends Graph implements JavaMethodContext {
     public void recordMethod(ResolvedJavaMethod method) {
         if (methods != null) {
             methods.add(method);
+//            System.out.println(method.getName() + " was used to build graph with root " + this.rootMethod.getName());
         }
     }
 

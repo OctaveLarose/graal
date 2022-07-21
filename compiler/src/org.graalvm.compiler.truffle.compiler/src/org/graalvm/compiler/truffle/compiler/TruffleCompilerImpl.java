@@ -606,6 +606,7 @@ public abstract class TruffleCompilerImpl implements TruffleCompilerBase {
                     TruffleCompilationTask task) {
 
         replaceAnyExtendNodes(graph);
+        System.out.println("LE SAUCiSSON");
         DebugContext debug = graph.getDebug();
         try (DebugContext.Scope s = debug.scope("TruffleFinal")) {
             debug.dump(DebugContext.BASIC_LEVEL, graph, "After TruffleTier");

@@ -839,6 +839,11 @@ public abstract class PEGraphDecoder extends SimplifyingGraphDecoder {
                 graph.recordMethod(other);
             }
         }
+//        System.out.println("graph with root " + graph.rootMethod.getName() + " has recorded methods:");
+//        for (ResolvedJavaMethod m: graph.getMethods()) {
+//            System.out.print(m + ", ");
+//        }
+//        System.out.println("---\n");
         Assumptions assumptions = graph.getAssumptions();
         Assumptions inlinedAssumptions = encodedGraph.getAssumptions();
         if (assumptions != null) {
@@ -1136,6 +1141,16 @@ public abstract class PEGraphDecoder extends SimplifyingGraphDecoder {
     }
 
     protected LoopScope doInline(PEMethodScope methodScope, LoopScope loopScope, InvokeData invokeData, InlineInfo inlineInfo, ValueNode[] arguments) {
+        if (graph.rootMethod.getDeclaringClass().toJavaName(true).equals("trufflesom.interpreter.supernodes.LocalVariableReadSquareWriteNodeGen")) {
+            System.out.println("NOBODY ASKED, FOR YOUR, OPINION!");
+
+        }
+//        System.out.println(graph.rootMethod.getDeclaringClass().toJavaName(true) + " ... " + graph.rootMethod.getName());
+
+        if (graph.rootMethod.getName().equals("executeGeneric")) {
+            System.out.println("WEEHEEEE!");
+        }
+
         if (invokeData.invoke.getInlineControl() != Invoke.InlineControl.Normal) {
             // The graph decoder only has one version of the method so treat the BytecodesOnly case
             // as don't inline.

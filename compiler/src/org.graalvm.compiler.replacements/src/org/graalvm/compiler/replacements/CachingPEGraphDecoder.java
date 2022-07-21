@@ -113,6 +113,11 @@ public class CachingPEGraphDecoder extends PEGraphDecoder {
             throw debug.handle(t);
         }
 
+        System.out.println("graph with root " + graph.rootMethod.getName() + " has recorded methods:");
+        for (ResolvedJavaMethod m: graph.getMethods()) {
+            System.out.println(m);
+        }
+        System.out.println("---\n");
         EncodedGraph encodedGraph = GraphEncoder.encodeSingleGraph(graphToEncode, architecture);
         graphCache.put(method, encodedGraph);
         return encodedGraph;
@@ -133,6 +138,12 @@ public class CachingPEGraphDecoder extends PEGraphDecoder {
             if (intrinsicBytecodeProvider != null) {
                 throw GraalError.shouldNotReachHere("isn't this dead?");
             }
+            if (method.getDeclaringClass().toJavaName(true).equals("trufflesom.interpreter.supernodes.LocalVariableReadSquareWriteNodeGen") &&
+                method.getName().equals("executeGeneric")) {
+                System.out.println("that's the spice"); // target graph
+//                System.out.println(method.getDeclaringClass().toString());
+//                System.out.println(method.getDeclaringClass().toJavaName(true));
+            }
             IntrinsicContext initialIntrinsicContext = null;
             GraphBuilderPhase.Instance graphBuilderPhaseInstance = createGraphBuilderPhaseInstance(initialIntrinsicContext);
             graphBuilderPhaseInstance.apply(graphToEncode);
@@ -151,6 +162,7 @@ public class CachingPEGraphDecoder extends PEGraphDecoder {
                     boolean trackNodeSourcePosition) {
         EncodedGraph result = graphCache.get(method);
         if (result == null && method.hasBytecodes()) {
+//            System.out.println("how often does that happen? if so it's for " + method.getName() + " with class " + method.getDeclaringClass().toJavaName(true));
             result = createGraph(method, intrinsicBytecodeProvider, isSubstitution);
         }
         return result;

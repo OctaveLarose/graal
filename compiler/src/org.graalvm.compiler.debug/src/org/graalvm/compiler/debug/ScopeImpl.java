@@ -220,6 +220,7 @@ public final class ScopeImpl implements DebugContext.Scope {
             DebugConfig config = getConfig();
             if (config != null) {
                 for (DebugDumpHandler dumpHandler : config.dumpHandlers()) {
+//                    System.out.println("Scope of next dump:" + this.getQualifiedName());
                     dumpHandler.dump(object, owner, false, formatString, args);
                 }
             }

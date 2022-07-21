@@ -265,7 +265,6 @@ public abstract class PartialEvaluationTest extends TruffleCompilerImplTest {
         OptionValues compileOptions = new OptionValues(getGraalOptions(), extra);
         DebugContext debug = getDebugContext(compileOptions);
         lastDebug = debug;
-        debug.getDescription();
 
         try (DebugContext.Scope s = debug.scope("TruffleCompilation", new TruffleDebugJavaMethod(compilable))) {
             SpeculationLog speculationLog = compilable.getCompilationSpeculationLog();
@@ -279,7 +278,8 @@ public abstract class PartialEvaluationTest extends TruffleCompilerImplTest {
             TruffleTier truffleTier = truffleCompiler.getTruffleTier();
             final PartialEvaluator partialEvaluator = truffleCompiler.getPartialEvaluator();
             try (PerformanceInformationHandler handler = PerformanceInformationHandler.install(compilable.getOptionValues())) {
-                final TruffleTierContext context = new TruffleTierContext(partialEvaluator, compilable.getOptionValues(), debug, compilable, partialEvaluator.rootForCallTarget(compilable),
+                final TruffleTierContext context = new TruffleTierContext(partialEvaluator, compilable.getOptionValues(), debug, compilable,
+                                partialEvaluator.rootForCallTarget(compilable),
                                 compilationId, speculationLog,
                                 new TruffleCompilerImpl.CancellableTruffleCompilationTask(newTask()),
                                 handler);

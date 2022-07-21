@@ -52,6 +52,9 @@ public class GraphBuilderPhase extends BasePhase<HighTierContext> {
 
     @Override
     protected void run(StructuredGraph graph, HighTierContext context) {
+//        System.out.println("Graph builder on method: " + graph.rootMethod.getName());
+        if (graph.rootMethod.getName().equals("executeGeneric"))
+            System.out.println("Graph builder on method: " + graph.rootMethod.getName()); // Didn't match anything! Weird. Should match LocalVariable...Gen.executeGeneric
         new Instance(context, graphBuilderConfig, context.getOptimisticOptimizations(), null).run(graph);
     }
 

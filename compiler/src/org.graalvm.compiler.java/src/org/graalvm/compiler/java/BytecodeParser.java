@@ -1703,6 +1703,8 @@ public class BytecodeParser extends CoreProvidersDelegate implements GraphBuilde
 
     protected void genInvokeVirtual(int cpi, int opcode) {
         JavaMethod target = lookupMethod(cpi, opcode);
+//        if (target != null && target.getName().equals("executeGeneric"))
+//            System.out.println("mdlolXDDDD " + cpi + ", " + opcode);
         if (callTargetIsResolved(target)) {
             genInvokeVirtual((ResolvedJavaMethod) target);
         } else {

@@ -261,22 +261,26 @@ public abstract class BasePhase<C> implements PhaseSizeContract {
             if (shouldDumpAfterAtBasicLevel()) {
                 if (debug.isDumpEnabled(DebugContext.BASIC_LEVEL)) {
                     debug.dump(DebugContext.BASIC_LEVEL, graph, "After phase %s", getName());
+                    System.out.println("After phase " + getName());
                     dumped = true;
                 }
             } else {
                 if (debug.isDumpEnabled(DebugContext.INFO_LEVEL)) {
                     debug.dump(DebugContext.INFO_LEVEL, graph, "After phase %s", getName());
+                    System.out.println(DebugContext.INFO_LEVEL + ": After phase (2) " + getName());
                     dumped = true;
                 }
             }
         } else {
             if (debug.isDumpEnabled(DebugContext.INFO_LEVEL + 1)) {
                 debug.dump(DebugContext.INFO_LEVEL + 1, graph, "After subphase %s", getName());
+//                System.out.println(DebugContext.INFO_LEVEL + ": After subphase " + getName());
                 dumped = true;
             }
         }
         if (!dumped && debug.isDumpEnabled(DebugContext.ENABLED_LEVEL) && dumpedBefore) {
             debug.dump(DebugContext.ENABLED_LEVEL, graph, "After %s %s", isTopLevel ? "phase" : "subphase", getName());
+            System.out.println(DebugContext.ENABLED_LEVEL + ": After phase (3)" + getName());
         }
     }
 
