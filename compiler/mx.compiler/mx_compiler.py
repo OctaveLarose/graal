@@ -36,7 +36,7 @@ import zipfile
 import tarfile
 import subprocess
 import tempfile
-import sys
+import csv
 
 import mx_truffle
 import mx_sdk_vm
@@ -62,23 +62,7 @@ import argparse
 import shlex
 import json
 
-# Temporary imports and (re)definitions while porting mx from Python 2 to Python 3
-if sys.version_info[0] < 3:
-    from StringIO import StringIO
-    _unicode = unicode # pylint: disable=undefined-variable
-    def _decode(x):
-        return x
-    def _encode(x):
-        return x
-else:
-    from io import StringIO
-    _unicode = str
-    def _decode(x):
-        return x.decode()
-    def _encode(x):
-        return x.encode()
-
-_basestring = (str, _unicode)
+from io import StringIO
 
 _suite = mx.suite('compiler')
 
@@ -199,10 +183,9 @@ def _is_jvmci_enabled(vmargs):
 
 def _nodeCostDump(args, extraVMarguments=None):
     """list the costs associated with each Node type"""
-    import csv
     parser = ArgumentParser(prog='mx nodecostdump')
     parser.add_argument('--regex', action='store', help="Node Name Regex", default=False, metavar='<regex>')
-    parser.add_argument('--markdown', action='store_const', const=True, help="Format to Markdown table", default=False)
+    parser.add_argument('--markdown', action='store_true', help="Format to Markdown table")
     args, vmargs = parser.parse_known_args(args)
     additionalPrimarySuiteClassPath = '-Dprimary.suite.cp=' + mx.primary_suite().dir
     vmargs.extend([additionalPrimarySuiteClassPath, '-cp', mx.classpath('org.graalvm.compiler.hotspot.test'), '-XX:-UseJVMCIClassLoader', 'org.graalvm.compiler.hotspot.test.NodeCostDumpUtil'])
@@ -327,7 +310,11 @@ class UnitTestRun:
                     # If this is a coverage execution, we want maximal coverage
                     # and thus must not fail fast.
                     extra_args += ['--fail-fast']
-                if t: unittest(['--suite', suite] + extra_args + self.args + _remove_empty_entries(extraVMarguments) + _remove_empty_entries(extraUnitTestArguments))
+                if t:
+                    tags = {'task' : t.title}
+                    unittest(['--suite', suite] + extra_args + self.args +
+                              _remove_empty_entries(extraVMarguments) +
+                              _remove_empty_entries(extraUnitTestArguments), test_report_tags=tags)
 
 class BootstrapTest:
     def __init__(self, name, args, tags, suppress=None):
@@ -335,11 +322,11 @@ class BootstrapTest:
         self.args = args
         self.suppress = suppress
         self.tags = tags
-        if tags is not None and (not isinstance(tags, list) or all(not isinstance(x, _basestring) for x in tags)):
+        if tags is not None and (not isinstance(tags, list) or all(not isinstance(x, str) for x in tags)):
             mx.abort("Gate tag argument must be a list of strings, tag argument:" + str(tags))
 
     def run(self, tasks, extraVMarguments=None):
-        with Task(self.name, tasks, tags=self.tags) as t:
+        with Task(self.name, tasks, tags=self.tags, report=True) as t:
             if t:
                 if self.suppress:
                     out = mx.DuplicateSuppressingStream(self.suppress).write
@@ -479,7 +466,7 @@ def compiler_gate_runner(suites, unit_test_runs, bootstrap_tests, tasks, extraVM
     with Task('CheckCatchFiles', tasks, tags=[Tags.style]) as t:
         if t: _check_catch_files()
 
-    with Task('JDK_java_base_test', tasks, tags=['javabasetest']) as t:
+    with Task('JDK_java_base_test', tasks, tags=['javabasetest'], report=True) as t:
         if t: java_base_unittest(_remove_empty_entries(extraVMarguments) + [])
 
     # Run unit tests in hosted mode
@@ -510,12 +497,12 @@ def compiler_gate_runner(suites, unit_test_runs, bootstrap_tests, tasks, extraVM
         '-DCompileTheWorld.MultiThreaded=true', '-Dgraal.InlineDuringParsing=false', '-Dgraal.TrackNodeSourcePosition=true',
         '-DCompileTheWorld.Verbose=false', '-XX:ReservedCodeCacheSize=300m',
     ]
-    with Task('CTW:hosted', tasks, tags=GraalTags.ctw) as t:
+    with Task('CTW:hosted', tasks, tags=GraalTags.ctw, report=True) as t:
         if t:
             ctw(ctw_flags, _remove_empty_entries(extraVMarguments))
 
     # Also run ctw with economy mode as a separate task, to be able to filter it with tags
-    with Task('CTWEconomy:hosted', tasks, tags=GraalTags.ctweconomy) as t:
+    with Task('CTWEconomy:hosted', tasks, tags=GraalTags.ctweconomy, report=True) as t:
         if t:
             ctw(ctw_flags + _graalEconomyFlags, _remove_empty_entries(extraVMarguments))
 
@@ -555,7 +542,7 @@ def compiler_gate_benchmark_runner(tasks, extraVMarguments=None, prefix=''):
     dacapo_gate_iterations.update({'tradesoap': -1})
     for name in dacapo_suite.benchmarkList(bmSuiteArgs):
         iterations = dacapo_gate_iterations.get(name, -1)
-        with Task(prefix + 'DaCapo:' + name, tasks, tags=GraalTags.benchmarktest) as t:
+        with Task(prefix + 'DaCapo:' + name, tasks, tags=GraalTags.benchmarktest, report=True) as t:
             if t: _gate_dacapo(name, iterations, benchVmArgs + ['-Dgraal.TrackNodeSourcePosition=true'] + dacapo_esa)
 
     # run Scala DaCapo benchmarks #
@@ -566,13 +553,13 @@ def compiler_gate_benchmark_runner(tasks, extraVMarguments=None, prefix=''):
     }
     for name in scala_dacapo_suite.benchmarkList(bmSuiteArgs):
         iterations = scala_dacapo_gate_iterations.get(name, -1)
-        with Task(prefix + 'ScalaDaCapo:' + name, tasks, tags=GraalTags.benchmarktest) as t:
+        with Task(prefix + 'ScalaDaCapo:' + name, tasks, tags=GraalTags.benchmarktest, report=True) as t:
             if t: _gate_scala_dacapo(name, iterations, benchVmArgs + ['-Dgraal.TrackNodeSourcePosition=true'] + dacapo_esa)
 
     # run benchmark with non default setup #
     ########################################
     # ensure -Xbatch still works
-    with Task(prefix + 'DaCapo_pmd:BatchMode', tasks, tags=GraalTags.test) as t:
+    with Task(prefix + 'DaCapo_pmd:BatchMode', tasks, tags=GraalTags.test, report=True) as t:
         if t: _gate_dacapo('pmd', 1, benchVmArgs + ['-Xbatch'])
 
     # ensure benchmark counters still work but omit this test on
@@ -581,7 +568,7 @@ def compiler_gate_benchmark_runner(tasks, extraVMarguments=None, prefix=''):
     out = mx.OutputCapture()
     mx.run([jdk.java, '-version'], err=subprocess.STDOUT, out=out)
     if 'fastdebug' not in out.data:
-        with Task(prefix + 'DaCapo_pmd:BenchmarkCounters', tasks, tags=GraalTags.test) as t:
+        with Task(prefix + 'DaCapo_pmd:BenchmarkCounters', tasks, tags=GraalTags.test, report=True) as t:
             if t:
                 fd, logFile = tempfile.mkstemp()
                 os.close(fd) # Don't leak file descriptors
@@ -602,11 +589,11 @@ def compiler_gate_benchmark_runner(tasks, extraVMarguments=None, prefix=''):
                     os.remove(logFile)
 
     # ensure -Xcomp still works
-    with Task(prefix + 'XCompMode:product', tasks, tags=GraalTags.test) as t:
+    with Task(prefix + 'XCompMode:product', tasks, tags=GraalTags.test, report=True) as t:
         if t: run_vm(_remove_empty_entries(extraVMarguments) + ['-XX:+UseJVMCICompiler', '-Xcomp', '-version'])
 
     # ensure -XX:+PreserveFramePointer  still works
-    with Task(prefix + 'DaCapo_pmd:PreserveFramePointer', tasks, tags=GraalTags.test) as t:
+    with Task(prefix + 'DaCapo_pmd:PreserveFramePointer', tasks, tags=GraalTags.test, report=True) as t:
         if t: _gate_dacapo('pmd', default_iterations, benchVmArgs + ['-Xmx256M', '-XX:+PreserveFramePointer'], threads=4, force_serial_gc=False, set_start_heap_size=False)
 
 graal_unit_test_runs = [
@@ -614,7 +601,7 @@ graal_unit_test_runs = [
 ]
 
 _registers = {
-    'amd64': 'rbx,r11,r10,r14,xmm3,xmm11,xmm14',
+    'amd64': 'rbx,r11,r10,r14,xmm3,xmm2,xmm11,xmm14,k1?',
     'aarch64': 'r0,r1,r2,r3,r4,v0,v1,v2,v3'
 }
 if mx.get_arch() not in _registers:
@@ -951,13 +938,11 @@ def collate_metrics(args):
             if m:
                 isolate_metrics = join(directory, entry)
                 with open(isolate_metrics) as fp:
+                    reader = csv.reader(fp, delimiter=';')
                     line_no = 1
-                    for line in fp.readlines():
-                        values = line.strip().split(';')
+                    for line_no, values in enumerate(reader, start=1):
                         if len(values) != 3:
-                            mx.abort('{}:{}: invalid line: {}'.format(isolate_metrics, line_no, line))
-                        if len(values) != 3:
-                            mx.abort('{}:{}: expected 3 semicolon separated values: {}'.format(isolate_metrics, line_no, line))
+                            mx.abort('{}:{}: invalid line: {}'.format(isolate_metrics, line_no, values))
                         name, metric, unit = values
 
                         series = results.get(name, None)
@@ -974,17 +959,20 @@ def collate_metrics(args):
                         units[name] = unit
         filename_index += 1
 
-    if args.filenames:
+    if not results:
+        mx.log('No results to collate for ' + args.filenames[0])
+    elif args.filenames:
         collated_filename = args.filenames[0][:-len('.csv')] + '.collated.csv'
         with open(collated_filename, 'w') as fp:
+            writer = csv.writer(fp, delimiter=';')
             for n, series in sorted(results.items()):
                 while len(series) < len(args.filenames):
                     series.append(0)
-                print(n +';' + ';'.join((str(v) for v in series)) + ';' + units[n], file=fp)
+                writer.writerow([n] + [str(v) for v in series] + [units[n]])
         mx.log('Collated metrics into ' + collated_filename)
 
-def run_java(args, nonZeroIsFatal=True, out=None, err=None, cwd=None, timeout=None, env=None, addDefaultArgs=True, command_mapper_hooks=None):
-    graaljdk = get_graaljdk()
+def run_java(args, nonZeroIsFatal=True, out=None, err=None, cwd=None, timeout=None, env=None, addDefaultArgs=True, command_mapper_hooks=None, jdk=None):
+    graaljdk = jdk or get_graaljdk()
     vm_args = _parseVmArgs(args, addDefaultArgs=addDefaultArgs)
     args = ['-XX:+UnlockExperimentalVMOptions', '-XX:+EnableJVMCI'] + vm_args
     _check_bootstrap_config(args)
@@ -1119,7 +1107,7 @@ class GraalArchiveParticipant:
                 pass
             else:
                 provider = m.group(2)
-                for service in _decode(contents_supplier()).strip().split(os.linesep):
+                for service in (contents_supplier()).decode().strip().split(os.linesep):
                     assert service
                     version = m.group(1)
                     add_serviceprovider(service, provider, version)

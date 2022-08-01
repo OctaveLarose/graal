@@ -46,6 +46,7 @@ import java.util.NoSuchElementException;
 import java.util.Optional;
 import java.util.Set;
 import java.util.function.Function;
+import java.util.function.Predicate;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
@@ -154,7 +155,8 @@ public final class ModuleLayerFeature implements Feature {
             extraModules.addAll(Arrays.asList(SubstrateUtil.split(explicitlyAddedModules, ",")));
         }
 
-        extraModules.forEach(moduleName -> {
+        List<String> nonExplicit = List.of("ALL-DEFAULT", "ALL-SYSTEM", "ALL-MODULE-PATH");
+        extraModules.stream().filter(Predicate.not(nonExplicit::contains)).forEach(moduleName -> {
             Optional<?> module = accessImpl.imageClassLoader.findModule(moduleName);
             if (module.isEmpty()) {
                 VMError.shouldNotReachHere("Explicitly required module " + moduleName + " is not available");
@@ -378,7 +380,7 @@ public final class ModuleLayerFeature implements Feature {
             imageClassLoader = cl;
             Method classGetDeclaredMethods0Method = ReflectionUtil.lookupMethod(Class.class, "getDeclaredFields0", boolean.class);
             try {
-                ModuleSupport.openModuleByClass(Module.class, ModuleLayerFeature.class);
+                ModuleSupport.accessModuleByClass(ModuleSupport.Access.OPEN, ModuleLayerFeature.class, Module.class);
                 Field[] moduleClassFields = (Field[]) classGetDeclaredMethods0Method.invoke(Module.class, false);
 
                 Field everyoneModuleField = findFieldByName(moduleClassFields, "EVERYONE_MODULE");

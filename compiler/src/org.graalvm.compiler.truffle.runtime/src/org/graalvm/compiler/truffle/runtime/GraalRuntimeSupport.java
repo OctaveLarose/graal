@@ -39,8 +39,8 @@ import com.oracle.truffle.api.TruffleSafepoint;
 import com.oracle.truffle.api.frame.Frame;
 import com.oracle.truffle.api.frame.VirtualFrame;
 import com.oracle.truffle.api.impl.AbstractFastThreadLocal;
-import com.oracle.truffle.api.impl.FrameWithoutBoxing;
 import com.oracle.truffle.api.impl.Accessor.RuntimeSupport;
+import com.oracle.truffle.api.impl.FrameWithoutBoxing;
 import com.oracle.truffle.api.impl.ThreadLocalHandshake;
 import com.oracle.truffle.api.nodes.BlockNode;
 import com.oracle.truffle.api.nodes.BlockNode.ElementExecutor;
@@ -131,12 +131,11 @@ final class GraalRuntimeSupport extends RuntimeSupport {
             BytecodeOSRMetadata metadata = (BytecodeOSRMetadata) osrNode.getOSRMetadata();
             if (metadata == null) {
                 OptimizedCallTarget callTarget = (OptimizedCallTarget) node.getRootNode().getCallTarget();
-                if (callTarget.getOptionValue(PolyglotCompilerOptions.OSR)) {
+                if (callTarget.engine.compilation && callTarget.getOptionValue(PolyglotCompilerOptions.OSR)) {
                     metadata = new BytecodeOSRMetadata(osrNode, callTarget.getOptionValue(PolyglotCompilerOptions.OSRCompilationThreshold));
                 } else {
                     metadata = BytecodeOSRMetadata.DISABLED;
                 }
-
                 osrNode.setOSRMetadata(metadata);
             }
             return metadata;
@@ -158,10 +157,24 @@ final class GraalRuntimeSupport extends RuntimeSupport {
         }
     }
 
+    // Support for deprecated frame transfer: GR-38296
     @Override
-    public void transferOSRFrame(BytecodeOSRNode osrNode, Frame source, Frame target) {
+    public void transferOSRFrame(BytecodeOSRNode osrNode, Frame source, Frame target, int bytecodeTarget) {
         BytecodeOSRMetadata osrMetadata = (BytecodeOSRMetadata) osrNode.getOSRMetadata();
-        osrMetadata.transferFrame((FrameWithoutBoxing) source, (FrameWithoutBoxing) target);
+        BytecodeOSRMetadata.OsrEntryDescription targetMetadata = osrMetadata.getLazyState().get(bytecodeTarget);
+        osrMetadata.transferFrame((FrameWithoutBoxing) source, (FrameWithoutBoxing) target, bytecodeTarget, targetMetadata);
+    }
+
+    @Override
+    public void transferOSRFrame(BytecodeOSRNode osrNode, Frame source, Frame target, int bytecodeTarget, Object targetMetadata) {
+        BytecodeOSRMetadata osrMetadata = (BytecodeOSRMetadata) osrNode.getOSRMetadata();
+        osrMetadata.transferFrame((FrameWithoutBoxing) source, (FrameWithoutBoxing) target, bytecodeTarget, targetMetadata);
+    }
+
+    @Override
+    public void restoreOSRFrame(BytecodeOSRNode osrNode, Frame source, Frame target) {
+        BytecodeOSRMetadata osrMetadata = (BytecodeOSRMetadata) osrNode.getOSRMetadata();
+        osrMetadata.restoreFrame((FrameWithoutBoxing) source, (FrameWithoutBoxing) target);
     }
 
     @Override

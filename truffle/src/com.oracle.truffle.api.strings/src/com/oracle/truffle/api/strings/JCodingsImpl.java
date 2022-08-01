@@ -49,6 +49,7 @@ import static com.oracle.truffle.api.strings.TStringGuards.isUTF16;
 import static com.oracle.truffle.api.strings.TStringGuards.isUTF16Or32;
 import static com.oracle.truffle.api.strings.TStringGuards.isUTF32;
 import static com.oracle.truffle.api.strings.TStringGuards.isUTF8;
+import static com.oracle.truffle.api.strings.TruffleString.ErrorHandling;
 
 import java.util.Arrays;
 
@@ -64,6 +65,7 @@ import org.graalvm.shadowed.org.jcodings.util.CaseInsensitiveBytesHash;
 import com.oracle.truffle.api.CompilerDirectives;
 import com.oracle.truffle.api.CompilerDirectives.TruffleBoundary;
 import com.oracle.truffle.api.nodes.Node;
+import com.oracle.truffle.api.profiles.BranchProfile;
 import com.oracle.truffle.api.profiles.ConditionProfile;
 
 final class JCodingsImpl implements JCodings {
@@ -172,7 +174,7 @@ final class JCodingsImpl implements JCodings {
             return index * minLength(jCoding);
         }
         int offset = a.byteArrayOffset() + extraOffsetRaw;
-        int end = a.byteArrayOffset() + a.length() - extraOffsetRaw;
+        int end = a.byteArrayOffset() + a.length();
         int cpi = 0;
         int i = 0;
         while (i < a.length() - extraOffsetRaw) {
@@ -201,16 +203,14 @@ final class JCodingsImpl implements JCodings {
     }
 
     @Override
-    public int decode(AbstractTruffleString a, byte[] arrayA, int rawIndex, Encoding jCoding) {
+    public int decode(AbstractTruffleString a, byte[] arrayA, int rawIndex, Encoding jCoding, ErrorHandling errorHandling) {
         int p = a.byteArrayOffset() + rawIndex;
         int end = a.byteArrayOffset() + a.length();
         int length = getCodePointLength(jCoding, arrayA, p, end);
         if (length < 1) {
-            return Encodings.invalidCodepoint();
+            return Encodings.invalidCodepointReturnValue(errorHandling);
         }
-        int codePoint = readCodePoint(jCoding, arrayA, p, end);
-        assert codePoint >= 0;
-        return codePoint;
+        return readCodePoint(jCoding, arrayA, p, end);
     }
 
     @Override
@@ -268,16 +268,17 @@ final class JCodingsImpl implements JCodings {
 
     @Override
     public TruffleString transcode(Node location, AbstractTruffleString a, Object arrayA, int codePointLengthA, int targetEncoding,
-                    ConditionProfile outOfMemoryProfile,
+                    BranchProfile outOfMemoryProfile,
                     ConditionProfile nativeProfile,
                     TStringInternalNodes.FromBufferWithStringCompactionNode fromBufferWithStringCompactionNode) {
+        final int encoding = a.encoding();
         final JCodings.Encoding jCodingSrc;
-        if (isUTF16Or32(a) && isStride0(a)) {
+        if (isUTF16Or32(encoding) && isStride0(a)) {
             jCodingSrc = TruffleString.Encoding.ISO_8859_1.getJCoding();
-        } else if (isUTF32(a) && isStride1(a)) {
+        } else if (isUTF32(encoding) && isStride1(a)) {
             jCodingSrc = TruffleString.Encoding.UTF_16.getJCoding();
         } else {
-            jCodingSrc = JCodings.getInstance().get(a.encoding());
+            jCodingSrc = JCodings.getInstance().get(encoding);
         }
         JCodings.Encoding jCodingDst = JCodings.getInstance().get(targetEncoding);
         byte[] buffer = new byte[(int) Math.min(TStringConstants.MAX_ARRAY_SIZE, ((long) codePointLengthA) * JCodings.getInstance().maxLength(jCodingDst))];
@@ -319,7 +320,8 @@ final class JCodingsImpl implements JCodings {
                     undefinedConversion = true;
                     econvSetReplacement(jCodingDst, econv, replacement);
                 } else if (result.isDestinationBufferFull()) {
-                    if (outOfMemoryProfile.profile(buffer.length == TStringConstants.MAX_ARRAY_SIZE)) {
+                    if (buffer.length == TStringConstants.MAX_ARRAY_SIZE) {
+                        outOfMemoryProfile.enter();
                         throw InternalErrors.outOfMemory();
                     }
                     buffer = Arrays.copyOf(buffer, (int) Math.min(TStringConstants.MAX_ARRAY_SIZE, ((long) buffer.length) << 1));

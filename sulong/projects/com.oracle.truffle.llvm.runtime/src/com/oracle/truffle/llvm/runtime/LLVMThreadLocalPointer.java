@@ -29,12 +29,22 @@
  */
 package com.oracle.truffle.llvm.runtime;
 
+import com.oracle.truffle.api.profiles.BranchProfile;
+import com.oracle.truffle.llvm.runtime.IDGenerater.BitcodeID;
+import com.oracle.truffle.llvm.runtime.LLVMLanguage.LLVMThreadLocalValue;
+import com.oracle.truffle.llvm.runtime.except.LLVMIllegalSymbolIndexException;
+import com.oracle.truffle.llvm.runtime.global.LLVMGlobalContainer;
+import com.oracle.truffle.llvm.runtime.pointer.LLVMManagedPointer;
+import com.oracle.truffle.llvm.runtime.pointer.LLVMPointer;
+
 public class LLVMThreadLocalPointer {
 
-    private LLVMSymbol symbol;
-    private long offset;
+    private final LLVMSymbol symbol;
 
-    public LLVMThreadLocalPointer(LLVMSymbol symbol, long offset) {
+    // if the offset is -1, then the global contains an object.
+    private final int offset;
+
+    public LLVMThreadLocalPointer(LLVMSymbol symbol, int offset) {
         this.symbol = symbol;
         this.offset = offset;
     }
@@ -43,12 +53,34 @@ public class LLVMThreadLocalPointer {
         return symbol;
     }
 
-    public long getOffset() {
+    public boolean isManaged() {
+        return offset < 0;
+    }
+
+    public int getOffset() {
         return offset;
     }
 
     @Override
     public String toString() {
         return symbol.toString();
+    }
+
+    public LLVMPointer resolve(LLVMLanguage language, BranchProfile exception) {
+        return resolveWithThreadContext(language.contextThreadLocal.get(), exception);
+    }
+
+    public LLVMPointer resolveWithThreadContext(LLVMThreadLocalValue contextThreadLocal, BranchProfile exception) {
+        BitcodeID bitcodeID = getSymbol().getBitcodeID(exception);
+        if (isManaged()) {
+            LLVMGlobalContainer container = contextThreadLocal.getGlobalContainer(Math.abs(offset), bitcodeID);
+            return LLVMManagedPointer.create(container);
+        } else {
+            LLVMPointer base = contextThreadLocal.getSectionBase(bitcodeID);
+            if (base == null) {
+                throw new LLVMIllegalSymbolIndexException("Section base for thread local global is null");
+            }
+            return base.increment(getOffset());
+        }
     }
 }

@@ -10,7 +10,7 @@ Follow these steps:
 
 1. Navigate to [Oracle GraalVM Downloads](https://www.oracle.com/downloads/graalvm-downloads.html).
 2. Select the preferable GraalVM Enterprise version in the Release Version dropdown, **11** or **17** for the Java version, and **Windows** for the operating system.
-3. Click on the **GraalVM Enterprise Core** download link. Before you download a file, you must accept the [Oracle License Agreement](https://www.oracle.com/downloads/licenses/graalvm-otn-license.html) in the popup window.
+3. Click on the **GraalVM Enterprise JDK** download link. Before you download a file, you must accept the [Oracle License Agreement](https://www.oracle.com/downloads/licenses/graalvm-otn-license.html) in the popup window.
 4. When the download button becomes active, press it to start downloading graalvm-ee-java<version>-windows-amd64-<version>.zip.
 5. Change the directory to the location where you want to install GraalVM Enterprise, then move the _.zip_ archive to it.
 6. Unzip the archive to your file system.
@@ -45,8 +45,8 @@ Repeat the same for the `PATH` environment variable.
 
 ## Supported Functionalities
 
-The GraalVM Enterprise distribution for Windows platforms includes Oracle JDK with the GraalVM compiler enabled, the [GraalVM Updater](../../reference-manual/graalvm-updater.md) tool, the JavaScript runtime, and the developer tools (e.g., Chrome inspector based debugger, Profiler, etc.).
-Currently, the GraalVM Enterprise environment on Windows can be extended with [Native Image](../../reference-manual/native-image/README.md), [Java on Trufle](../../reference-manual/java-on-truffle/README.md), WebAssembly, and Node.js support.
+The GraalVM Enterprise distribution for Windows platforms includes Oracle JDK with the GraalVM compiler enabled, the [GraalVM Updater](../../reference-manual/graalvm-updater.md) tool to install additional functionalities and the developer tools (e.g., Chrome inspector based debugger, Profiler, etc.).
+Currently, the GraalVM environment on Windows can be extended with [Native Image](../../reference-manual/native-image/README.md), [Java on Truffle](../../reference-manual/java-on-truffle/README.md), [LLVM runtime](../../reference-manual/llvm/README.md), WebAssembly, JavaScript and Node.js support.
 
 ## Prerequisites for Using Native Image on Windows
 On Windows, Native Image requires Visual Studio Code and Microsoft Visual C++(MSVC).

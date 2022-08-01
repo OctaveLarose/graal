@@ -623,7 +623,7 @@ public final class Engine implements AutoCloseable {
                 throw new IllegalStateException("The Polyglot API implementation failed to load.");
             }
             Engine engine = polyglot.buildEngine(permittedLanguages, out, err, in, options, useSystemProperties, allowExperimentalOptions,
-                            boundEngine, messageTransport, customLogHandler, polyglot.createHostLanguage(polyglot.createHostAccess()), false);
+                            boundEngine, messageTransport, customLogHandler, polyglot.createHostLanguage(polyglot.createHostAccess()), false, true, null);
             return engine;
         }
 
@@ -642,17 +642,19 @@ public final class Engine implements AutoCloseable {
         }
 
         @Override
-        public Engine newEngine(AbstractEngineDispatch dispatch, Object receiver) {
+        public Engine newEngine(AbstractEngineDispatch dispatch, Object receiver, boolean registerInActiveEngines) {
             Engine engine = new Engine(dispatch, receiver);
-            if (!shutdownHookInitialized) {
-                synchronized (ENGINES) {
-                    if (!shutdownHookInitialized) {
-                        shutdownHookInitialized = true;
-                        Runtime.getRuntime().addShutdownHook(new Thread(new EngineShutDownHook()));
+            if (registerInActiveEngines) {
+                if (!shutdownHookInitialized) {
+                    synchronized (ENGINES) {
+                        if (!shutdownHookInitialized) {
+                            shutdownHookInitialized = true;
+                            Runtime.getRuntime().addShutdownHook(new Thread(new EngineShutDownHook()));
+                        }
                     }
                 }
+                ENGINES.put(engine, null);
             }
-            ENGINES.put(engine, null);
             return engine;
         }
 
@@ -847,6 +849,16 @@ public final class Engine implements AutoCloseable {
         }
 
         @Override
+        public boolean allowsPublicAccess(HostAccess access) {
+            return access.allowPublic;
+        }
+
+        @Override
+        public boolean allowsAccessInheritance(HostAccess access) {
+            return access.allowAccessInheritance;
+        }
+
+        @Override
         public Object getHostAccessImpl(HostAccess conf) {
             return conf.impl;
         }
@@ -959,8 +971,8 @@ public final class Engine implements AutoCloseable {
 
         @Override
         public Engine buildEngine(String[] permittedLanguages, OutputStream out, OutputStream err, InputStream in, Map<String, String> arguments, boolean useSystemProperties,
-                        boolean allowExperimentalOptions, boolean boundEngine,
-                        MessageTransport messageInterceptor, Object logHandlerOrStream, Object hostLanguage, boolean hostLanguageOnly) {
+                        boolean allowExperimentalOptions, boolean boundEngine, MessageTransport messageInterceptor, Object logHandlerOrStream, Object hostLanguage,
+                        boolean hostLanguageOnly, boolean registerInActiveEngines, AbstractPolyglotHostService polyglotHostService) {
             throw noPolyglotImplementationFound();
         }
 
@@ -1013,6 +1025,16 @@ public final class Engine implements AutoCloseable {
         }
 
         @Override
+        public FileSystem allowLanguageHomeAccess(FileSystem fileSystem) {
+            throw noPolyglotImplementationFound();
+        }
+
+        @Override
+        public FileSystem newReadOnlyFileSystem(FileSystem fileSystem) {
+            throw noPolyglotImplementationFound();
+        }
+
+        @Override
         public ProcessHandler newDefaultProcessHandler() {
             throw noPolyglotImplementationFound();
         }
@@ -1033,7 +1055,7 @@ public final class Engine implements AutoCloseable {
         }
 
         @Override
-        public Source build(String language, Object origin, URI uri, String name, String mimeType, Object content, boolean interactive, boolean internal, boolean cached, Charset encoding)
+        public Source build(String language, Object origin, URI uri, String name, String mimeType, Object content, boolean interactive, boolean internal, boolean cached, Charset encoding, String path)
                         throws IOException {
             throw noPolyglotImplementationFound();
         }

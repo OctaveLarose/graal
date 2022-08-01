@@ -72,6 +72,7 @@ import com.oracle.truffle.espresso.analysis.hierarchy.ClassHierarchyOracle;
 import com.oracle.truffle.espresso.analysis.hierarchy.DefaultClassHierarchyOracle;
 import com.oracle.truffle.espresso.analysis.hierarchy.NoOpClassHierarchyOracle;
 import com.oracle.truffle.espresso.blocking.BlockingSupport;
+import com.oracle.truffle.espresso.blocking.EspressoLock;
 import com.oracle.truffle.espresso.descriptors.Names;
 import com.oracle.truffle.espresso.descriptors.Signatures;
 import com.oracle.truffle.espresso.descriptors.Symbol;
@@ -94,6 +95,7 @@ import com.oracle.truffle.espresso.jdwp.api.VMEventListenerImpl;
 import com.oracle.truffle.espresso.jni.JniEnv;
 import com.oracle.truffle.espresso.meta.EspressoError;
 import com.oracle.truffle.espresso.meta.Meta;
+import com.oracle.truffle.espresso.nodes.interop.EspressoForeignProxyGenerator;
 import com.oracle.truffle.espresso.perf.DebugCloseable;
 import com.oracle.truffle.espresso.perf.DebugTimer;
 import com.oracle.truffle.espresso.perf.TimerCollection;
@@ -130,14 +132,11 @@ public final class EspressoContext {
 
     private String[] mainArguments;
     private String[] vmArguments;
+    private long startupClockNanos = 0;
 
     // region Debug
     private final TimerCollection timers;
     // endregion Debug
-
-    // region Profiling
-    private final AllocationReporter allocationReporter;
-    // endregion Profiling
 
     // region Runtime
     private final StringTable strings;
@@ -151,7 +150,8 @@ public final class EspressoContext {
     private final EspressoThreadRegistry threadRegistry;
     @CompilationFinal private ThreadsAccess threads;
     @CompilationFinal private BlockingSupport<StaticObject> blockingSupport;
-    private final EspressoShutdownHandler shutdownManager;
+    @CompilationFinal private GuestAllocator allocator;
+    @CompilationFinal private EspressoShutdownHandler shutdownManager;
     private final EspressoReferenceDrainer referenceDrainer;
     // endregion Helpers
 
@@ -167,6 +167,7 @@ public final class EspressoContext {
     @CompilationFinal private boolean modulesInitialized = false;
     @CompilationFinal private boolean metaInitialized = false;
     private boolean initialized = false;
+    private boolean disposeCalled = false;
     private Classpath bootClasspath;
     // endregion InitControl
 
@@ -190,16 +191,13 @@ public final class EspressoContext {
     public final boolean InlineFieldAccessors;
     public final boolean InlineMethodHandle;
     public final boolean SplitMethodHandles;
-    public final EspressoOptions.LivenessAnalysisMode LivenessAnalysisMode;
-    public final int LivenessAnalysisMinimumLocals;
 
     // Behavior control
     public final boolean EnableManagement;
-    public final EspressoOptions.VerifyMode Verify;
-    public final EspressoOptions.SpecCompliancyMode SpecCompliancyMode;
+    public final boolean SoftExit;
+    public final boolean AllowHostExit;
     public final boolean Polyglot;
     public final boolean HotSwapAPI;
-    public final boolean ExitHost;
     public final boolean EnableSignals;
     private final String multiThreadingDisabled;
     public final boolean NativeAccessAllowed;
@@ -207,6 +205,8 @@ public final class EspressoContext {
     public final int TrivialMethodSize;
     public final boolean UseHostFinalReference;
     public final EspressoOptions.JImageMode jimageMode;
+    private final PolyglotInterfaceMappings polyglotInterfaceMappings;
+    private final HashMap<String, EspressoForeignProxyGenerator.GeneratedProxyBytes> proxyCache;
 
     // Debug option
     public final com.oracle.truffle.espresso.jdwp.api.JDWPOptions JDWPOptions;
@@ -230,7 +230,7 @@ public final class EspressoContext {
     @CompilationFinal private EspressoException stackOverflow;
     @CompilationFinal private EspressoException outOfMemory;
 
-    @CompilationFinal private TruffleObject topBindings;
+    @CompilationFinal private EspressoBindings topBindings;
     private final WeakHashMap<StaticObject, SignalHandler> hostSignalHandlers = new WeakHashMap<>();
 
     public TruffleLogger getLogger() {
@@ -269,12 +269,12 @@ public final class EspressoContext {
         this.threadRegistry = new EspressoThreadRegistry(this);
         this.referenceDrainer = new EspressoReferenceDrainer(this);
 
-        boolean softExit = env.getOptions().get(EspressoOptions.SoftExit);
-        this.ExitHost = env.getOptions().get(EspressoOptions.ExitHost);
-        this.shutdownManager = new EspressoShutdownHandler(this, threadRegistry, referenceDrainer, softExit);
+        this.SoftExit = env.getOptions().get(EspressoOptions.SoftExit);
+        this.AllowHostExit = env.getOptions().get(EspressoOptions.ExitHost);
+
+        this.allocator = new GuestAllocator(this, env.lookup(AllocationReporter.class));
 
         this.timers = TimerCollection.create(env.getOptions().get(EspressoOptions.EnableTimers));
-        this.allocationReporter = env.lookup(AllocationReporter.class);
 
         // null if not specified
         this.JDWPOptions = env.getOptions().get(EspressoOptions.JDWPOptions);
@@ -284,11 +284,7 @@ public final class EspressoContext {
         this.InlineFieldAccessors = JDWPOptions == null && env.getOptions().get(EspressoOptions.InlineFieldAccessors);
         this.InlineMethodHandle = JDWPOptions == null && env.getOptions().get(EspressoOptions.InlineMethodHandle);
         this.SplitMethodHandles = JDWPOptions == null && env.getOptions().get(EspressoOptions.SplitMethodHandles);
-        this.Verify = env.getOptions().get(EspressoOptions.Verify);
         this.EnableSignals = env.getOptions().get(EspressoOptions.EnableSignals);
-        this.SpecCompliancyMode = env.getOptions().get(EspressoOptions.SpecCompliancy);
-        this.LivenessAnalysisMode = env.getOptions().get(EspressoOptions.LivenessAnalysis);
-        this.LivenessAnalysisMinimumLocals = env.getOptions().get(EspressoOptions.LivenessAnalysisMinimumLocals);
         this.EnableManagement = env.getOptions().get(EspressoOptions.EnableManagement);
         this.EnableAgents = getEnv().getOptions().get(EspressoOptions.EnableAgents);
         this.TrivialMethodSize = getEnv().getOptions().get(EspressoOptions.TrivialMethodSize);
@@ -318,6 +314,8 @@ public final class EspressoContext {
         this.NativeAccessAllowed = env.isNativeAccessAllowed();
         this.Polyglot = env.getOptions().get(EspressoOptions.Polyglot);
         this.HotSwapAPI = env.getOptions().get(EspressoOptions.HotSwapAPI);
+        this.polyglotInterfaceMappings = new PolyglotInterfaceMappings(env.getOptions().get(EspressoOptions.PolyglotInterfaceMappings));
+        this.proxyCache = polyglotInterfaceMappings.hasMappings() ? new HashMap<>() : null;
 
         EspressoOptions.JImageMode requestedJImageMode = env.getOptions().get(EspressoOptions.JImage);
         if (!NativeAccessAllowed && requestedJImageMode == EspressoOptions.JImageMode.NATIVE) {
@@ -399,6 +397,10 @@ public final class EspressoContext {
         return vmArguments;
     }
 
+    public long getStartupClockNanos() {
+        return startupClockNanos;
+    }
+
     private String[] buildVmArguments() {
         OptionMap<String> argsMap = getEnv().getOptions().get(EspressoOptions.VMArguments);
         if (argsMap == null) {
@@ -455,6 +457,7 @@ public final class EspressoContext {
                         "Native access is not allowed by the host environment but it's required to load Espresso/Java native libraries. " +
                                         "Allow native access on context creation e.g. contextBuilder.allowNativeAccess(true)");
         assert !this.initialized;
+        startupClockNanos = System.nanoTime();
 
         // Setup finalization support in the host VM.
         FinalizationSupport.ensureInitialized();
@@ -465,23 +468,34 @@ public final class EspressoContext {
         if (JDWPOptions != null) {
             jdwpContext.jdwpInit(env, getMainThread(), eventListener);
         }
+        polyglotInterfaceMappings.resolve(this);
         referenceDrainer.startReferenceDrain();
     }
 
-    public Source findOrCreateSource(Method method) {
-        String sourceFile = method.getSourceFile();
+    @TruffleBoundary
+    public Source findOrCreateSource(ObjectKlass klass) {
+        String sourceFile = klass.getSourceFile();
         if (sourceFile == null) {
             return null;
-        } else {
-            TruffleFile file = env.getInternalTruffleFile(sourceFile);
-            Source source = Source.newBuilder("java", file).content(Source.CONTENT_NONE).build();
-            // sources are interned so no cache needed (hopefully)
-            return source;
         }
+        if (!sourceFile.contains("/") && !sourceFile.contains("\\")) {
+            // try to come up with a more unique name
+            Symbol<Name> runtimePackage = klass.getRuntimePackage();
+            if (runtimePackage != null && runtimePackage.length() > 0) {
+                sourceFile = runtimePackage + "/" + sourceFile;
+            }
+        }
+        TruffleFile file = env.getInternalTruffleFile(sourceFile);
+        // sources are interned so no cache needed (hopefully)
+        return Source.newBuilder("java", file).content(Source.CONTENT_NONE).build();
     }
 
     public Meta getMeta() {
         return meta;
+    }
+
+    public GuestAllocator getAllocator() {
+        return allocator;
     }
 
     public NativeAccess getNativeAccess() {
@@ -522,6 +536,7 @@ public final class EspressoContext {
             this.metaInitialized = true;
             this.threads = new ThreadsAccess(meta);
             this.blockingSupport = BlockingSupport.create(threads);
+            this.shutdownManager = new EspressoShutdownHandler(this, threadRegistry, referenceDrainer, SoftExit);
 
             this.interpreterToVM = new InterpreterToVM(this);
 
@@ -596,8 +611,8 @@ public final class EspressoContext {
                 }
             }
             // Init memoryError instances
-            StaticObject stackOverflowErrorInstance = meta.java_lang_StackOverflowError.allocateInstance();
-            StaticObject outOfMemoryErrorInstance = meta.java_lang_OutOfMemoryError.allocateInstance();
+            StaticObject stackOverflowErrorInstance = meta.java_lang_StackOverflowError.allocateInstance(this);
+            StaticObject outOfMemoryErrorInstance = meta.java_lang_OutOfMemoryError.allocateInstance(this);
 
             // Preemptively set stack trace.
             meta.HIDDEN_FRAMES.setHiddenObject(stackOverflowErrorInstance, VM.StackTrace.EMPTY_STACK_TRACE);
@@ -761,6 +776,16 @@ public final class EspressoContext {
     }
 
     public void disposeContext() {
+        synchronized (this) {
+            if (disposeCalled) {
+                getLogger().warning("Context is being disposed multiple times");
+                return;
+            }
+            disposeCalled = true;
+        }
+    }
+
+    public void cleanupNativeEnv() {
         if (initialized) {
             getVM().dispose();
             getJNI().dispose();
@@ -789,27 +814,6 @@ public final class EspressoContext {
 
     public EspressoException getOutOfMemory() {
         return outOfMemory;
-    }
-
-    public <T> T trackAllocation(T object) {
-        if (allocationReporter != null) {
-            allocationReporter.onEnter(null, 0, AllocationReporter.SIZE_UNKNOWN);
-            allocationReporter.onReturnValue(object, 0, AllocationReporter.SIZE_UNKNOWN);
-        }
-        return object;
-    }
-
-    public boolean needsVerify(StaticObject classLoader) {
-        switch (Verify) {
-            case NONE:
-                return false;
-            case REMOTE:
-                return !StaticObject.isNull(classLoader);
-            case ALL:
-                return true;
-            default:
-                return true;
-        }
     }
 
     public void prepareDispose() {
@@ -857,32 +861,41 @@ public final class EspressoContext {
     }
 
     /**
-     * Creates a new guest thread from the host thread, and adds it to the main thread group.
+     * Creates a new guest thread from the host thread, and adds it to the main thread group. This
+     * thread is not in Espresso's control.
      */
     public StaticObject createThread(Thread hostThread) {
-        return threadRegistry.createGuestThreadFromHost(hostThread, meta, vm);
+        return createThread(hostThread, getMainThreadGroup(), null, false);
     }
 
     public StaticObject createThread(Thread hostThread, StaticObject group, String name) {
-        return threadRegistry.createGuestThreadFromHost(hostThread, meta, vm, name, group);
+        return createThread(hostThread, group, name, true);
     }
 
-    public void disposeThread(@SuppressWarnings("unused") Thread hostThread) {
+    public StaticObject createThread(Thread hostThread, StaticObject group, String name, boolean managedByEspresso) {
+        return threadRegistry.createGuestThreadFromHost(hostThread, meta, vm, name, group, managedByEspresso);
+    }
+
+    public void disposeThread(Thread hostThread) {
         StaticObject guestThread = getGuestThreadFromHost(hostThread);
         if (guestThread == null) {
             return;
         }
-        if (hostThread != Thread.currentThread()) {
-            String guestName = threads.getThreadName(guestThread);
-            getLogger().warning("unimplemented: disposeThread for non-current thread: " + hostThread + " / " + guestName);
-            return;
-        }
-        // Cannot run guest code after finalizeContext was called (GR-35712).
-        if (isFinalized()) {
-            return;
-        }
-        if (vm.DetachCurrentThread(this) != JNI_OK) {
-            throw new RuntimeException("Could not detach thread correctly");
+        try {
+            // Cannot run guest code after finalizeContext was called (GR-35712).
+            if (isFinalized()) {
+                return;
+            }
+            if (hostThread != Thread.currentThread()) {
+                String guestName = threads.getThreadName(guestThread);
+                getLogger().warning("unimplemented: disposeThread for non-current thread: " + hostThread + " / " + guestName + ". Called from thread: " + Thread.currentThread());
+                return;
+            }
+            if (vm.DetachCurrentThread(this) != JNI_OK) {
+                throw new RuntimeException("Could not detach thread correctly");
+            }
+        } finally {
+            unregisterThread(guestThread);
         }
     }
 
@@ -924,8 +937,8 @@ public final class EspressoContext {
     }
 
     public void unregisterThread(StaticObject self) {
-        threadRegistry.unregisterThread(self);
-        if (shouldReportVMEvents) {
+        boolean unregistered = threadRegistry.unregisterThread(self);
+        if (shouldReportVMEvents && unregistered) {
             eventListener.threadDied(self);
         }
     }
@@ -950,20 +963,34 @@ public final class EspressoContext {
 
     // region Shutdown
 
-    public Object getShutdownSynchronizer() {
-        return shutdownManager.getShutdownSynchronizer();
+    public void notifyShutdownSynchronizer() {
+        EspressoLock lock = shutdownManager.getShutdownSynchronizer();
+        lock.lock();
+        try {
+            lock.signalAll();
+        } finally {
+            lock.unlock();
+        }
+    }
+
+    public void truffleExit(Node location, int exitCode) {
+        getEnv().getContext().closeExited(location, exitCode);
     }
 
     public void doExit(int code) {
         shutdownManager.doExit(code);
     }
 
-    public void destroyVM(boolean killThreads) {
-        shutdownManager.destroyVM(killThreads);
+    public void destroyVM() {
+        shutdownManager.destroyVM();
     }
 
     public boolean isClosing() {
         return shutdownManager.isClosing();
+    }
+
+    public boolean isTruffleClosed() {
+        return getEnv().getContext().isClosed();
     }
 
     public int getExitStatus() {
@@ -972,10 +999,6 @@ public final class EspressoContext {
 
     public EspressoError abort(String message) {
         getLogger().severe(message);
-        if (ExitHost) {
-            System.exit(1);
-            throw EspressoError.shouldNotReachHere();
-        }
         throw new EspressoExitException(1);
     }
 
@@ -1011,7 +1034,7 @@ public final class EspressoContext {
         return timers;
     }
 
-    public TruffleObject getBindings() {
+    public EspressoBindings getBindings() {
         return topBindings;
     }
 
@@ -1117,5 +1140,23 @@ public final class EspressoContext {
 
     public void setFinalized() {
         isFinalized = true;
+    }
+
+    public boolean explicitTypeMappingsEnabled() {
+        return polyglotInterfaceMappings.hasMappings();
+    }
+
+    public PolyglotInterfaceMappings getPolyglotInterfaceMappings() {
+        return polyglotInterfaceMappings;
+    }
+
+    public EspressoForeignProxyGenerator.GeneratedProxyBytes getProxyBytesOrNull(String name) {
+        assert proxyCache != null;
+        return proxyCache.get(name);
+    }
+
+    public void registerProxyBytes(String name, EspressoForeignProxyGenerator.GeneratedProxyBytes generatedProxyBytes) {
+        assert proxyCache != null;
+        proxyCache.put(name, generatedProxyBytes);
     }
 }

@@ -53,6 +53,7 @@ import org.graalvm.compiler.core.common.LIRKind;
 import org.graalvm.compiler.core.common.NumUtil;
 import org.graalvm.compiler.core.common.calc.CanonicalCondition;
 import org.graalvm.compiler.core.common.calc.Condition;
+import org.graalvm.compiler.core.common.memory.MemoryExtendKind;
 import org.graalvm.compiler.core.gen.NodeLIRBuilder;
 import org.graalvm.compiler.core.gen.NodeMatchRules;
 import org.graalvm.compiler.core.match.ComplexMatchResult;
@@ -284,7 +285,7 @@ public class AMD64NodeMatchRules extends NodeMatchRules {
     private Value emitReinterpretMemory(LIRKind to, AddressableMemoryAccess access) {
         AMD64AddressValue address = (AMD64AddressValue) operand(access.getAddress());
         LIRFrameState state = getState(access);
-        return getArithmeticLIRGenerator().emitLoad(to, address, state);
+        return getArithmeticLIRGenerator().emitLoad(to, address, state, MemoryExtendKind.DEFAULT);
     }
 
     private boolean supports(CPUFeature feature) {
@@ -614,6 +615,7 @@ public class AMD64NodeMatchRules extends NodeMatchRules {
     }
 
     @MatchRule("(Write=write object (Add Read=read value))")
+    @MatchRule("(SideEffectFreeWrite=write object (Add Read=read value))")
     public ComplexMatchResult addToMemory(WriteNode write, ReadNode read, ValueNode value) {
         return emitMemoryConsumer(write, ADD, read, value);
     }

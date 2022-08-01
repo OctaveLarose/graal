@@ -37,12 +37,14 @@ import static org.graalvm.compiler.lir.LIRInstruction.OperandFlag.ILLEGAL;
 import static org.graalvm.compiler.lir.LIRInstruction.OperandFlag.REG;
 import static org.graalvm.compiler.lir.LIRInstruction.OperandFlag.STACK;
 
+import java.util.Arrays;
 import java.util.function.IntConsumer;
 import java.util.function.Supplier;
+import java.util.stream.Stream;
 
 import org.graalvm.compiler.asm.Label;
 import org.graalvm.compiler.asm.amd64.AMD64Address;
-import org.graalvm.compiler.asm.amd64.AMD64Address.Scale;
+import org.graalvm.compiler.core.common.Stride;
 import org.graalvm.compiler.asm.amd64.AMD64Assembler.ConditionFlag;
 import org.graalvm.compiler.asm.amd64.AMD64BaseAssembler.OperandSize;
 import org.graalvm.compiler.asm.amd64.AMD64MacroAssembler;
@@ -683,12 +685,16 @@ public class AMD64ControlFlow {
             // Jump to default target if index is not within the jump table
             masm.jcc(ConditionFlag.Above, defaultTarget.label());
 
+            emitJumpTable(crb, masm, scratchReg, idxScratchReg, lowKey, highKey, Arrays.stream(targets).map(LabelRef::label));
+        }
+
+        public static void emitJumpTable(CompilationResultBuilder crb, AMD64MacroAssembler masm, Register scratchReg, Register idxScratchReg, int lowKey, int highKey, Stream<Label> targets) {
             // Set scratch to address of jump table
             masm.leaq(scratchReg, new AMD64Address(AMD64.rip, 0));
             final int afterLea = masm.position();
 
             // Load jump table entry into scratch and jump to it
-            masm.movslq(idxScratchReg, new AMD64Address(scratchReg, idxScratchReg, Scale.Times4, 0));
+            masm.movslq(idxScratchReg, new AMD64Address(scratchReg, idxScratchReg, Stride.S4, 0));
             masm.addq(scratchReg, idxScratchReg);
             masm.jmp(scratchReg);
 
@@ -702,8 +708,7 @@ public class AMD64ControlFlow {
             masm.emitInt(jumpTablePos - afterLea, leaDisplacementPosition);
 
             // Emit jump table entries
-            for (LabelRef target : targets) {
-                Label label = target.label();
+            targets.forEach(label -> {
                 int offsetToJumpTableBase = masm.position() - jumpTablePos;
                 if (label.isBound()) {
                     int imm32 = label.position() - jumpTablePos;
@@ -715,7 +720,7 @@ public class AMD64ControlFlow {
                     masm.emitShort(offsetToJumpTableBase);
                     masm.emitByte(0); // padding to make jump table entry 4 bytes wide
                 }
-            }
+            });
 
             JumpTable jt = new JumpTable(jumpTablePos, lowKey, highKey, EntryFormat.OFFSET_ONLY);
             crb.compilationResult.addAnnotation(jt);
@@ -759,7 +764,7 @@ public class AMD64ControlFlow {
             if (defaultTarget != null) {
 
                 // Move the table entry (two DWORDs) into a QWORD
-                masm.movq(entryScratchReg, new AMD64Address(scratchReg, indexReg, Scale.Times8, 0));
+                masm.movq(entryScratchReg, new AMD64Address(scratchReg, indexReg, Stride.S8, 0));
 
                 // Jump to the default target if the first DWORD (original key) doesn't match the
                 // current key. Accounts for hash collisions with unknown keys
@@ -771,7 +776,7 @@ public class AMD64ControlFlow {
 
                 // The jump table has a single DWORD with the label address if there's no
                 // default target
-                masm.movslq(entryScratchReg, new AMD64Address(scratchReg, indexReg, Scale.Times4, 0));
+                masm.movslq(entryScratchReg, new AMD64Address(scratchReg, indexReg, Stride.S4, 0));
             }
             masm.addq(scratchReg, entryScratchReg);
             masm.jmp(scratchReg);

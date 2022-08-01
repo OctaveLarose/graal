@@ -54,7 +54,7 @@ public class TruffleTypes {
     public static final String ALWAYS_SLOW_PATH_MODE_NAME = "com.oracle.truffle.api.dsl.test.AlwaysGenerateOnlySlowPath";
     public static final String EXPECT_ERROR_CLASS_NAME1 = "com.oracle.truffle.api.dsl.test.ExpectError";
     public static final String EXPECT_ERROR_CLASS_NAME2 = "com.oracle.truffle.api.test.ExpectError";
-    public static final List<String> TEST_PACKAGES = List.of("com.oracle.truffle.api.test");
+    public static final List<String> TEST_PACKAGES = List.of("com.oracle.truffle.api.test", "com.oracle.truffle.api.instrumentation.test");
 
     public final DeclaredType AlwaysSlowPath = c.getDeclaredTypeOptional(ALWAYS_SLOW_PATH_MODE_NAME);
 
@@ -147,8 +147,6 @@ public class TruffleTypes {
     public static final String Cached_Exclusive_Name = "com.oracle.truffle.api.dsl.Cached.Exclusive";
     public static final String Cached_Name = "com.oracle.truffle.api.dsl.Cached";
     public static final String Cached_Shared_Name = "com.oracle.truffle.api.dsl.Cached.Shared";
-    public static final String CachedContext_Name = "com.oracle.truffle.api.dsl.CachedContext";
-    public static final String CachedLanguage_Name = "com.oracle.truffle.api.dsl.CachedLanguage";
     public static final String CreateCast_Name = "com.oracle.truffle.api.dsl.CreateCast";
     public static final String Executed_Name = "com.oracle.truffle.api.dsl.Executed";
     public static final String ExecuteTracingSupport_Name = "com.oracle.truffle.api.dsl.ExecuteTracingSupport";
@@ -187,8 +185,6 @@ public class TruffleTypes {
     public final DeclaredType Cached = c.getDeclaredType(Cached_Name);
     public final DeclaredType Cached_Exclusive = c.getDeclaredType(Cached_Exclusive_Name);
     public final DeclaredType Cached_Shared = c.getDeclaredType(Cached_Shared_Name);
-    public final DeclaredType CachedContext = c.getDeclaredType(CachedContext_Name);
-    public final DeclaredType CachedLanguage = c.getDeclaredType(CachedLanguage_Name);
     public final DeclaredType CreateCast = c.getDeclaredType(CreateCast_Name);
     public final DeclaredType Executed = c.getDeclaredType(Executed_Name);
     public final DeclaredType ExecuteTracingSupport = c.getDeclaredType(ExecuteTracingSupport_Name);

@@ -1,3 +1,7 @@
+# common
+local common = import 'common.json';
+local graal_common = import 'graal-common.json';
+
 # Compiler
 local compiler = import 'compiler/ci.jsonnet';
 
@@ -35,15 +39,16 @@ local vm = import 'vm/ci_includes/vm.jsonnet';
 # for a PR that only touches *.md files, the docs, are config files for GitHub
 local add_excludes_guard(build) = build + {
   guard+: {
-    excludes+: ["**.md", "docs/**", ".github/**"]
+    excludes+: ["**.md", "docs/**", ".devcontainer/**", ".github/**"]
   }
 };
 
 {
-  # Ensure that entries in common.jsonnet can be resolved
+  # Ensure that entries in common.jsonnet can be resolved.
   _checkCommon: (import 'common.jsonnet'),
   ci_resources:: (import 'ci-resources.libsonnet'),
-  specVersion: "2",
+  overlay: graal_common.ci.overlay,
+  specVersion: "3",
   builds: [add_excludes_guard(b) for b in (
     compiler.builds +
     wasm.builds +

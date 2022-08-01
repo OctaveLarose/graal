@@ -32,11 +32,14 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
+import jdk.vm.ci.meta.ResolvedJavaMethod;
+import jdk.vm.ci.meta.ResolvedJavaType;
 import org.graalvm.compiler.debug.DebugContext;
 
 import com.oracle.objectfile.debuginfo.DebugInfoProvider.DebugFieldInfo;
 import com.oracle.objectfile.debuginfo.DebugInfoProvider.DebugFrameSizeChange;
 import com.oracle.objectfile.debuginfo.DebugInfoProvider.DebugInstanceTypeInfo;
+import com.oracle.objectfile.debuginfo.DebugInfoProvider.DebugLocalInfo;
 import com.oracle.objectfile.debuginfo.DebugInfoProvider.DebugMethodInfo;
 import com.oracle.objectfile.debuginfo.DebugInfoProvider.DebugRangeInfo;
 import com.oracle.objectfile.debuginfo.DebugInfoProvider.DebugTypeInfo;
@@ -63,9 +66,10 @@ public class ClassEntry extends StructureTypeEntry {
      */
     protected List<MethodEntry> methods;
     /**
-     * An index of all currently known methods keyed by the unique local symbol name of the method.
+     * An index of all currently known methods keyed by the unique, associated, identifying
+     * ResolvedJavaMethod.
      */
-    private Map<String, MethodEntry> methodsIndex;
+    private Map<ResolvedJavaMethod, MethodEntry> methodsIndex;
     /**
      * A list recording details of all primary ranges included in this class sorted by ascending
      * address range.
@@ -126,18 +130,21 @@ public class ClassEntry extends StructureTypeEntry {
 
     @Override
     public void addDebugInfo(DebugInfoBase debugInfoBase, DebugTypeInfo debugTypeInfo, DebugContext debugContext) {
-        assert TypeEntry.canonicalize(debugTypeInfo.typeName()).equals(typeName);
+        assert debugTypeInfo.typeName().equals(typeName);
         DebugInstanceTypeInfo debugInstanceTypeInfo = (DebugInstanceTypeInfo) debugTypeInfo;
         /* Add details of super and interface classes */
-        String superName = debugInstanceTypeInfo.superName();
-        if (superName != null) {
-            superName = TypeEntry.canonicalize(superName);
+        ResolvedJavaType superType = debugInstanceTypeInfo.superClass();
+        String superName;
+        if (superType != null) {
+            superName = superType.toJavaName();
+        } else {
+            superName = "";
         }
         debugContext.log("typename %s adding super %s\n", typeName, superName);
-        if (superName != null) {
-            this.superClass = debugInfoBase.lookupClassEntry(superName);
+        if (superType != null) {
+            this.superClass = debugInfoBase.lookupClassEntry(superType);
         }
-        debugInstanceTypeInfo.interfaces().forEach(interfaceName -> processInterface(interfaceName, debugInfoBase, debugContext));
+        debugInstanceTypeInfo.interfaces().forEach(interfaceType -> processInterface(interfaceType, debugInfoBase, debugContext));
         /* Add details of fields and field types */
         debugInstanceTypeInfo.fieldInfoProvider().forEach(debugFieldInfo -> this.processField(debugFieldInfo, debugInfoBase, debugContext));
         /* Add details of methods and method types */
@@ -176,11 +183,10 @@ public class ClassEntry extends StructureTypeEntry {
         }
     }
 
-    private void indexMethodEntry(MethodEntry methodEntry) {
-        String methodName = methodEntry.getSymbolName();
-        assert methodsIndex.get(methodName) == null : methodName;
+    private void indexMethodEntry(MethodEntry methodEntry, ResolvedJavaMethod idMethod) {
+        assert methodsIndex.get(idMethod) == null : methodEntry.getSymbolName();
         methods.add(methodEntry);
-        methodsIndex.put(methodName, methodEntry);
+        methodsIndex.put(idMethod, methodEntry);
     }
 
     private void indexLocalFileEntry(FileEntry localFileEntry) {
@@ -272,9 +278,10 @@ public class ClassEntry extends StructureTypeEntry {
         return "";
     }
 
-    private void processInterface(String interfaceName, DebugInfoBase debugInfoBase, DebugContext debugContext) {
+    private void processInterface(ResolvedJavaType interfaceType, DebugInfoBase debugInfoBase, DebugContext debugContext) {
+        String interfaceName = interfaceType.toJavaName();
         debugContext.log("typename %s adding interface %s\n", typeName, interfaceName);
-        ClassEntry entry = debugInfoBase.lookupClassEntry(TypeEntry.canonicalize(interfaceName));
+        ClassEntry entry = debugInfoBase.lookupClassEntry(interfaceType);
         assert entry instanceof InterfaceClassEntry;
         InterfaceClassEntry interfaceClassEntry = (InterfaceClassEntry) entry;
         interfaces.add(interfaceClassEntry);
@@ -283,26 +290,18 @@ public class ClassEntry extends StructureTypeEntry {
 
     protected MethodEntry processMethod(DebugMethodInfo debugMethodInfo, DebugInfoBase debugInfoBase, DebugContext debugContext) {
         String methodName = debugMethodInfo.name();
-        String resultTypeName = TypeEntry.canonicalize(debugMethodInfo.valueType());
+        ResolvedJavaType resultType = debugMethodInfo.valueType();
+        String resultTypeName = resultType.toJavaName();
         int modifiers = debugMethodInfo.modifiers();
-        List<String> paramTypes = debugMethodInfo.paramTypes();
-        List<String> paramNames = debugMethodInfo.paramNames();
-        assert paramTypes.size() == paramNames.size();
-        int paramCount = paramTypes.size();
+        DebugLocalInfo[] paramInfos = debugMethodInfo.getParamInfo();
+        DebugLocalInfo thisParam = debugMethodInfo.getThisParamInfo();
+        int paramCount = paramInfos.length;
         debugContext.log("typename %s adding %s method %s %s(%s)\n",
-                        typeName, memberModifiers(modifiers), resultTypeName, methodName, formatParams(paramTypes, paramNames));
-        TypeEntry resultType = debugInfoBase.lookupTypeEntry(resultTypeName);
-        TypeEntry[] paramTypeArray = null;
-        String[] paramNameArray = null;
-        if (paramCount != 0) {
-            paramTypeArray = new TypeEntry[paramCount];
-            paramNameArray = new String[paramCount];
-            int idx = 0;
-            for (String paramTypeName : paramTypes) {
-                TypeEntry paramType = debugInfoBase.lookupTypeEntry(TypeEntry.canonicalize(paramTypeName));
-                paramTypeArray[idx++] = paramType;
-            }
-            paramNameArray = paramNames.toArray(paramNameArray);
+                        typeName, memberModifiers(modifiers), resultTypeName, methodName, formatParams(paramInfos));
+        TypeEntry resultTypeEntry = debugInfoBase.lookupTypeEntry(resultType);
+        TypeEntry[] typeEntries = new TypeEntry[paramCount];
+        for (int i = 0; i < paramCount; i++) {
+            typeEntries[i] = debugInfoBase.lookupTypeEntry(paramInfos[i].valueType());
         }
         /*
          * n.b. the method file may differ from the owning class file when the method is a
@@ -310,8 +309,8 @@ public class ClassEntry extends StructureTypeEntry {
          */
         FileEntry methodFileEntry = debugInfoBase.ensureFileEntry(debugMethodInfo);
         MethodEntry methodEntry = new MethodEntry(debugInfoBase, debugMethodInfo, methodFileEntry, methodName,
-                        this, resultType, paramTypeArray, paramNameArray);
-        indexMethodEntry(methodEntry);
+                        this, resultTypeEntry, typeEntries, paramInfos, thisParam);
+        indexMethodEntry(methodEntry, debugMethodInfo.idMethod());
 
         return methodEntry;
     }
@@ -326,21 +325,18 @@ public class ClassEntry extends StructureTypeEntry {
         return fieldEntry;
     }
 
-    private static String formatParams(List<String> paramTypes, List<String> paramNames) {
-        if (paramNames.size() == 0) {
+    private static String formatParams(DebugLocalInfo[] paramInfo) {
+        if (paramInfo.length == 0) {
             return "";
         }
         StringBuilder builder = new StringBuilder();
-        String separator = "";
-        for (int i = 0; i < paramNames.size(); i++) {
-            builder.append(separator);
-            builder.append(paramTypes.get(i));
-            String paramName = paramNames.get(i);
-            if (paramName.length() > 0) {
-                builder.append(' ');
-                builder.append(paramName);
+        for (int i = 0; i < paramInfo.length; i++) {
+            if (i > 0) {
+                builder.append(", ");
             }
-            separator = ", ";
+            builder.append(paramInfo[i].typeName());
+            builder.append(' ');
+            builder.append(paramInfo[i].name());
         }
 
         return builder.toString();
@@ -356,7 +352,7 @@ public class ClassEntry extends StructureTypeEntry {
 
     public MethodEntry ensureMethodEntryForDebugRangeInfo(DebugRangeInfo debugRangeInfo, DebugInfoBase debugInfoBase, DebugContext debugContext) {
 
-        MethodEntry methodEntry = methodsIndex.get(debugRangeInfo.symbolNameForMethod());
+        MethodEntry methodEntry = methodsIndex.get(debugRangeInfo.idMethod());
         if (methodEntry == null) {
             methodEntry = processMethod(debugRangeInfo, debugInfoBase, debugContext);
         } else {

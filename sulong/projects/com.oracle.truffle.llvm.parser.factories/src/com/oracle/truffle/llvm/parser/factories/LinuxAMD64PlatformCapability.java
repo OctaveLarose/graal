@@ -47,7 +47,7 @@ import com.oracle.truffle.llvm.runtime.nodes.intrinsics.llvm.x86.LLVMX86_64VaLis
 import com.oracle.truffle.llvm.runtime.pointer.LLVMPointer;
 import com.oracle.truffle.llvm.runtime.types.Type;
 
-final class LinuxAMD64PlatformCapability extends BasicPlatformCapability<LinuxAMD64Syscall> {
+final class LinuxAMD64PlatformCapability extends BasicAMD64PlatformCapability<LinuxAMD64Syscall> {
 
     LinuxAMD64PlatformCapability(boolean loadCxxLibraries) {
         super(LinuxAMD64Syscall.class, loadCxxLibraries);
@@ -79,13 +79,13 @@ final class LinuxAMD64PlatformCapability extends BasicPlatformCapability<LinuxAM
     }
 
     @Override
-    public Object createVAListStorage(LLVMVAListNode allocaNode, LLVMPointer vaListStackPtr) {
-        return new LLVMX86_64VaListStorage(vaListStackPtr);
+    public Object createVAListStorage(LLVMVAListNode allocaNode, LLVMPointer vaListStackPtr, Type vaListType) {
+        return new LLVMX86_64VaListStorage(vaListStackPtr, vaListType);
     }
 
     @Override
-    public Type getVAListType() {
-        return LLVMX86_64VaListStorage.VA_LIST_TYPE;
+    public Type getGlobalVAListType(Type type) {
+        return LLVMX86_64VaListStorage.VA_LIST_TYPE.equals(type) ? LLVMX86_64VaListStorage.VA_LIST_TYPE : null;
     }
 
     @Override

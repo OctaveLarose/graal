@@ -44,7 +44,6 @@ import java.util.Map;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.BiFunction;
 
-import com.oracle.svm.shadowed.org.bytedeco.llvm.global.LLVM;
 import org.graalvm.compiler.code.CompilationResult;
 import org.graalvm.compiler.core.common.CompressEncoding;
 import org.graalvm.compiler.core.common.LIRKind;
@@ -52,6 +51,7 @@ import org.graalvm.compiler.core.common.NumUtil;
 import org.graalvm.compiler.core.common.calc.Condition;
 import org.graalvm.compiler.core.common.calc.FloatConvert;
 import org.graalvm.compiler.core.common.cfg.AbstractBlockBase;
+import org.graalvm.compiler.core.common.memory.MemoryExtendKind;
 import org.graalvm.compiler.core.common.memory.MemoryOrderMode;
 import org.graalvm.compiler.core.common.spi.CodeGenProviders;
 import org.graalvm.compiler.core.common.spi.ForeignCallLinkage;
@@ -82,7 +82,6 @@ import org.graalvm.compiler.phases.util.Providers;
 import org.graalvm.compiler.serviceprovider.JavaVersionUtil;
 import org.graalvm.nativeimage.c.constant.CEnum;
 import org.graalvm.nativeimage.c.function.CEntryPoint;
-import org.graalvm.util.GuardedAnnotationAccess;
 
 import com.oracle.svm.core.FrameAccess;
 import com.oracle.svm.core.ReservedRegisters;
@@ -124,6 +123,8 @@ import com.oracle.svm.hosted.meta.HostedType;
 import com.oracle.svm.shadowed.org.bytedeco.llvm.LLVM.LLVMBasicBlockRef;
 import com.oracle.svm.shadowed.org.bytedeco.llvm.LLVM.LLVMTypeRef;
 import com.oracle.svm.shadowed.org.bytedeco.llvm.LLVM.LLVMValueRef;
+import com.oracle.svm.shadowed.org.bytedeco.llvm.global.LLVM;
+import com.oracle.svm.util.GuardedAnnotationAccess;
 import com.oracle.svm.util.ReflectionUtil;
 
 import jdk.vm.ci.code.CallingConvention;
@@ -185,7 +186,7 @@ public class LLVMGenerator implements LIRGeneratorTool, SubstrateLIRGenerator {
         this.lirKindTool = new LLVMUtils.LLVMKindTool(builder);
         this.debugInfoPrinter = new DebugInfoPrinter(this, debugLevel);
 
-        this.functionName = SubstrateUtil.uniqueShortName(method);
+        this.functionName = ((HostedMethod) method).getUniqueShortName();
         this.isEntryPoint = isEntryPoint(method);
         this.modifiesSpecialRegisters = modifiesSpecialRegisters(graph);
 
@@ -290,7 +291,7 @@ public class LLVMGenerator implements LIRGeneratorTool, SubstrateLIRGenerator {
     }
 
     private static String getFunctionName(ResolvedJavaMethod method) {
-        return SubstrateUtil.uniqueShortName(method);
+        return ((HostedMethod) method).getUniqueShortName();
     }
 
     private static boolean isEntryPoint(ResolvedJavaMethod method) {
@@ -1028,19 +1029,14 @@ public class LLVMGenerator implements LIRGeneratorTool, SubstrateLIRGenerator {
         builder.buildStackmap(builder.constantLong(startPatchpointId));
         compilationResult.recordInfopoint(NumUtil.safeToInt(startPatchpointId), null, InfopointReason.METHOD_START);
 
-        LLVMValueRef jumpAddressAddress;
+        LLVMValueRef jumpAddress;
         if (SubstrateOptions.SpawnIsolates.getValue()) {
-            LLVMValueRef thread = buildInlineGetRegister(threadArg.getRegister().name);
-            LLVMValueRef heapBaseAddress = builder.buildGEP(builder.buildIntToPtr(thread, builder.rawPointerType()), builder.constantInt(threadIsolateOffset));
-            LLVMValueRef heapBase = builder.buildLoad(heapBaseAddress, builder.rawPointerType());
-            LLVMValueRef methodId = buildInlineGetRegister(methodIdArg.getRegister().name);
-            LLVMValueRef methodBase = builder.buildGEP(builder.buildIntToPtr(heapBase, builder.rawPointerType()), builder.buildPtrToInt(methodId));
-            jumpAddressAddress = builder.buildGEP(methodBase, builder.constantInt(methodObjEntryPointOffset));
+            buildInlineLoad(threadArg.getRegister().name, LLVMTargetSpecific.get().getScratchRegister(), threadIsolateOffset);
+            buildInlineAdd(LLVMTargetSpecific.get().getScratchRegister(), methodIdArg.getRegister().name);
+            jumpAddress = buildInlineLoad(LLVMTargetSpecific.get().getScratchRegister(), LLVMTargetSpecific.get().getScratchRegister(), methodObjEntryPointOffset);
         } else {
-            LLVMValueRef methodBase = buildInlineGetRegister(methodIdArg.getRegister().name);
-            jumpAddressAddress = builder.buildGEP(builder.buildIntToPtr(methodBase, builder.rawPointerType()), builder.constantInt(methodObjEntryPointOffset));
+            jumpAddress = buildInlineLoad(methodIdArg.getRegister().name, LLVMTargetSpecific.get().getScratchRegister(), methodObjEntryPointOffset);
         }
-        LLVMValueRef jumpAddress = builder.buildLoad(jumpAddressAddress, builder.rawPointerType());
         buildInlineJump(jumpAddress);
         builder.buildUnreachable();
     }
@@ -1138,13 +1134,24 @@ public class LLVMGenerator implements LIRGeneratorTool, SubstrateLIRGenerator {
         builder.setCallSiteAttribute(call, Attribute.GCLeafFunction);
     }
 
-    private LLVMValueRef buildInlineGetRegister(String registerName) {
+    private LLVMValueRef buildInlineLoad(String inputRegisterName, String outputRegisterName, int offset) {
         LLVMTypeRef inlineAsmType = builder.functionType(builder.rawPointerType());
-        String asmSnippet = LLVMTargetSpecific.get().getRegisterInlineAsm(registerName);
-        InlineAssemblyConstraint outputConstraint = new InlineAssemblyConstraint(Type.Output, Location.namedRegister(LLVMTargetSpecific.get().getLLVMRegisterName(registerName)));
+        String asmSnippet = LLVMTargetSpecific.get().getLoadInlineAsm(inputRegisterName, offset);
+        InlineAssemblyConstraint outputConstraint = new InlineAssemblyConstraint(Type.Output, Location.namedRegister(outputRegisterName));
 
-        LLVMValueRef getRegister = builder.buildInlineAsm(inlineAsmType, asmSnippet, false, false, outputConstraint);
-        LLVMValueRef call = builder.buildCall(getRegister);
+        LLVMValueRef load = builder.buildInlineAsm(inlineAsmType, asmSnippet, false, false, outputConstraint);
+        LLVMValueRef call = builder.buildCall(load);
+        builder.setCallSiteAttribute(call, Attribute.GCLeafFunction);
+        return call;
+    }
+
+    private LLVMValueRef buildInlineAdd(String outputRegisterName, String inputRegisterName) {
+        LLVMTypeRef inlineAsmType = builder.functionType(builder.rawPointerType());
+        String asmSnippet = LLVMTargetSpecific.get().getAddInlineAssembly(outputRegisterName, inputRegisterName);
+        InlineAssemblyConstraint outputConstraint = new InlineAssemblyConstraint(Type.Output, Location.namedRegister(outputRegisterName));
+
+        LLVMValueRef add = builder.buildInlineAsm(inlineAsmType, asmSnippet, false, false, outputConstraint);
+        LLVMValueRef call = builder.buildCall(add);
         builder.setCallSiteAttribute(call, Attribute.GCLeafFunction);
         return call;
     }
@@ -1734,7 +1741,8 @@ public class LLVMGenerator implements LIRGeneratorTool, SubstrateLIRGenerator {
         }
 
         @Override
-        public Variable emitLoad(LIRKind kind, Value address, LIRFrameState state) {
+        public Variable emitLoad(LIRKind kind, Value address, LIRFrameState state, MemoryExtendKind extendKind) {
+            assert extendKind.isNotExtended();
             LLVMValueRef load = builder.buildLoad(getVal(address), getType(kind));
             return new LLVMVariable(load);
         }
@@ -1755,9 +1763,10 @@ public class LLVMGenerator implements LIRGeneratorTool, SubstrateLIRGenerator {
         }
 
         @Override
-        public Variable emitOrderedLoad(LIRKind kind, Value address, LIRFrameState state, MemoryOrderMode memoryOrder) {
+        public Variable emitOrderedLoad(LIRKind kind, Value address, LIRFrameState state, MemoryOrderMode memoryOrder, MemoryExtendKind extendKind) {
+            assert extendKind.isNotExtended();
             assert memoryOrder == MemoryOrderMode.OPAQUE || memoryOrder == MemoryOrderMode.ACQUIRE || memoryOrder == MemoryOrderMode.VOLATILE;
-            Variable var = emitLoad(kind, address, state);
+            Variable var = emitLoad(kind, address, state, extendKind);
             if (memoryOrder == MemoryOrderMode.ACQUIRE || memoryOrder == MemoryOrderMode.VOLATILE) {
                 /*
                  * Ensure subsequent memory operations cannot execute before this load. Additional

@@ -47,6 +47,7 @@ import com.oracle.svm.core.jdk.RuntimeSupport;
 import com.oracle.svm.core.log.Log;
 import com.oracle.svm.core.stack.JavaStackWalker;
 import com.oracle.svm.core.stack.ThreadStackPrinter.StackFramePrintVisitor;
+import com.oracle.svm.core.thread.JavaThreads;
 import com.oracle.svm.core.thread.JavaVMOperation;
 import com.oracle.svm.core.thread.PlatformThreads;
 import com.oracle.svm.core.thread.VMThreads;
@@ -136,21 +137,22 @@ class DumpAllStacks implements SignalHandler {
             Thread javaThread = PlatformThreads.fromVMThread(vmThread);
             if (javaThread != null) {
                 log.character('"').string(javaThread.getName()).character('"');
-                log.string(" #").signed(javaThread.getId());
+                log.string(" #").signed(JavaThreads.getThreadId(javaThread));
                 if (javaThread.isDaemon()) {
                     log.string(" daemon");
                 }
             } else {
                 log.string("(no Java thread)");
             }
-            log.string(" tid=0x").zhex(vmThread.rawValue());
+            log.string(" thread=").zhex(vmThread);
             if (javaThread != null) {
                 log.string(" state=").string(javaThread.getState().name());
             }
             log.newline();
 
             log.indent(true);
-            JavaStackWalker.walkThread(vmThread, StackFramePrintVisitor.SINGLETON, log);
+            StackFramePrintVisitor visitor = new StackFramePrintVisitor();
+            JavaStackWalker.walkThread(vmThread, visitor, log);
             log.indent(false);
         }
     }

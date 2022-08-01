@@ -45,11 +45,12 @@ import java.util.logging.Level;
 import com.oracle.truffle.api.Assumption;
 import com.oracle.truffle.api.CompilerAsserts;
 import com.oracle.truffle.api.CompilerDirectives;
+import com.oracle.truffle.api.HostCompilerDirectives;
 import com.oracle.truffle.api.CompilerDirectives.CompilationFinal;
 import com.oracle.truffle.api.CompilerDirectives.TruffleBoundary;
 import com.oracle.truffle.api.Truffle;
 import com.oracle.truffle.api.exception.AbstractTruffleException;
-import com.oracle.truffle.api.nodes.ExplodeLoop;
+import com.oracle.truffle.api.source.Source;
 import com.oracle.truffle.espresso.analysis.hierarchy.ClassHierarchyAssumption;
 import com.oracle.truffle.espresso.analysis.hierarchy.ClassHierarchyOracle;
 import com.oracle.truffle.espresso.analysis.hierarchy.ClassHierarchyOracle.ClassHierarchyAccessor;
@@ -66,6 +67,7 @@ import com.oracle.truffle.espresso.classfile.attributes.PermittedSubclassesAttri
 import com.oracle.truffle.espresso.classfile.attributes.RecordAttribute;
 import com.oracle.truffle.espresso.classfile.attributes.SignatureAttribute;
 import com.oracle.truffle.espresso.classfile.attributes.SourceDebugExtensionAttribute;
+import com.oracle.truffle.espresso.classfile.attributes.SourceFileAttribute;
 import com.oracle.truffle.espresso.descriptors.Names;
 import com.oracle.truffle.espresso.descriptors.Symbol;
 import com.oracle.truffle.espresso.descriptors.Symbol.Name;
@@ -102,6 +104,12 @@ public final class ObjectKlass extends Klass {
     @CompilationFinal //
     private StaticObject statics;
 
+    static {
+        // Ensures that 'statics' field can be non-volatile. This uses "Unsafe Local DCL + Safe
+        // Singleton" as described in https://shipilev.net/blog/2014/safe-public-construction
+        assert hasFinalInstanceField(StaticObject.class);
+    }
+
     private final Klass hostKlass;
 
     @CompilationFinal //
@@ -136,6 +144,8 @@ public final class ObjectKlass extends Klass {
 
     // used for class redefinition when refreshing vtables etc.
     private volatile ArrayList<WeakReference<ObjectKlass>> subTypes;
+
+    private Source source;
 
     public static final int LOADED = 0;
     public static final int LINKING = 1;
@@ -189,7 +199,12 @@ public final class ObjectKlass extends Klass {
             fieldTable[localFieldTableIndex + i] = instanceField;
         }
         for (int i = 0; i < lkStaticFields.length; i++) {
-            Field staticField = new Field(klassVersion, lkStaticFields[i], pool);
+            Field staticField;
+            if (superKlass == getMeta().java_lang_Enum && !isEnumValuesField(lkStaticFields[i])) {
+                staticField = new EnumConstantField(klassVersion, lkStaticFields[i], pool);
+            } else {
+                staticField = new Field(klassVersion, lkStaticFields[i], pool);
+            }
             staticFieldTable[i] = staticField;
         }
 
@@ -197,10 +212,10 @@ public final class ObjectKlass extends Klass {
         if (info.protectionDomain != null && !StaticObject.isNull(info.protectionDomain)) {
             // Protection domain should not be host null, and will be initialized to guest null on
             // mirror creation.
-            getMeta().HIDDEN_PROTECTION_DOMAIN.setHiddenObject(mirror(), info.protectionDomain);
+            getMeta().HIDDEN_PROTECTION_DOMAIN.setHiddenObject(initializeEspressoClass(), info.protectionDomain);
         }
         if (info.classData != null) {
-            getMeta().java_lang_Class_classData.setObject(mirror(), info.classData);
+            getMeta().java_lang_Class_classData.setObject(initializeEspressoClass(), info.classData);
         }
         if (!info.addedToRegistry()) {
             initSelfReferenceInPool();
@@ -209,7 +224,15 @@ public final class ObjectKlass extends Klass {
         this.implementor = getContext().getClassHierarchyOracle().initializeImplementorForNewKlass(this);
         getContext().getClassHierarchyOracle().registerNewKlassVersion(klassVersion);
         this.initState = LOADED;
+        if (getMeta().java_lang_Class != null) {
+            initializeEspressoClass();
+        }
         assert verifyTables();
+    }
+
+    private static boolean isEnumValuesField(LinkedField lkStaticFields) {
+        return lkStaticFields.getName() == Name.$VALUES ||
+                        lkStaticFields.getName() == Name.ENUM$VALUES;
     }
 
     private void addSubType(ObjectKlass objectKlass) {
@@ -284,17 +307,21 @@ public final class ObjectKlass extends Klass {
     }
 
     StaticObject getStaticsImpl() {
-        if (statics == null) {
-            obtainStatics();
+        StaticObject result = this.statics;
+        if (result == null) {
+            CompilerDirectives.transferToInterpreterAndInvalidate();
+            result = createStatics();
         }
-        return statics;
+        return result;
     }
 
-    private synchronized void obtainStatics() {
-        if (statics == null) {
-            CompilerDirectives.transferToInterpreterAndInvalidate();
-            statics = StaticObject.createStatics(this);
+    private synchronized StaticObject createStatics() {
+        CompilerAsserts.neverPartOfCompilation();
+        StaticObject result = this.statics;
+        if (result == null) {
+            this.statics = result = getAllocator().createStatics(this);
         }
+        return result;
     }
 
     // region InitStatus
@@ -350,12 +377,17 @@ public final class ObjectKlass extends Klass {
 
     private void checkErroneousInitialization() {
         if (isErroneous()) {
-            Meta meta = getMeta();
-            throw meta.throwExceptionWithMessage(meta.java_lang_NoClassDefFoundError, EspressoError.cat("Erroneous class: ", getName()));
+            throw throwNoClassDefFoundError();
         }
     }
 
-    @ExplodeLoop
+    @TruffleBoundary
+    private EspressoException throwNoClassDefFoundError() {
+        Meta meta = getMeta();
+        throw meta.throwExceptionWithMessage(meta.java_lang_NoClassDefFoundError, "Erroneous class: " + getName());
+    }
+
+    @TruffleBoundary
     private void actualInit() {
         checkErroneousInitialization();
         getInitLock().lock();
@@ -542,37 +574,51 @@ public final class ObjectKlass extends Klass {
     public void ensureLinked() {
         if (!isLinked()) {
             checkErroneousVerification();
-            CompilerDirectives.transferToInterpreterAndInvalidate();
-            getInitLock().lock();
-            try {
-                if (!isLinkingOrLinked()) {
-                    initState = LINKING;
-                    if (getSuperKlass() != null) {
-                        getSuperKlass().ensureLinked();
-                    }
-                    for (ObjectKlass interf : getSuperInterfaces()) {
-                        interf.ensureLinked();
-                    }
-                    prepare();
-                    verify();
-                    initState = LINKED;
-                }
-            } finally {
-                getInitLock().unlock();
+            if (CompilerDirectives.isCompilationConstant(this)) {
+                CompilerDirectives.transferToInterpreterAndInvalidate();
             }
-            checkErroneousVerification();
+            doLink();
         }
+    }
+
+    @TruffleBoundary
+    private void doLink() {
+        getInitLock().lock();
+        try {
+            if (!isLinkingOrLinked()) {
+                initState = LINKING;
+                if (getSuperKlass() != null) {
+                    getSuperKlass().ensureLinked();
+                }
+                for (ObjectKlass interf : getSuperInterfaces()) {
+                    interf.ensureLinked();
+                }
+                prepare();
+                verify();
+                initState = LINKED;
+            }
+        } finally {
+            getInitLock().unlock();
+        }
+        checkErroneousVerification();
     }
 
     void initializeImpl() {
         if (!isInitializedImpl()) { // Skip synchronization and locks if already init.
             // Allow folding the exception path if erroneous
-            checkErroneousVerification();
-            checkErroneousInitialization();
-            CompilerDirectives.transferToInterpreterAndInvalidate();
-            ensureLinked();
-            actualInit();
+            doInitialize();
         }
+    }
+
+    @HostCompilerDirectives.InliningCutoff
+    private void doInitialize() {
+        checkErroneousVerification();
+        checkErroneousInitialization();
+        if (CompilerDirectives.isCompilationConstant(this)) {
+            CompilerDirectives.transferToInterpreterAndInvalidate();
+        }
+        ensureLinked();
+        actualInit();
     }
 
     private void recursiveInitialize() {
@@ -649,7 +695,7 @@ public final class ObjectKlass extends Klass {
 
     private void verifyImpl() {
         CompilerAsserts.neverPartOfCompilation();
-        if (getContext().needsVerify(getDefiningClassLoader())) {
+        if (MethodVerifier.needsVerify(getLanguage(), getDefiningClassLoader())) {
             Meta meta = getMeta();
             if (getSuperKlass() != null && getSuperKlass().isFinalFlagSet()) {
                 throw meta.throwException(meta.java_lang_VerifyError);
@@ -678,7 +724,7 @@ public final class ObjectKlass extends Klass {
                 try {
                     MethodVerifier.verify(m);
                 } catch (MethodVerifier.VerifierError e) {
-                    String message = String.format("Verification for class `%s` failed for method `%s`", getExternalName(), m.getNameAsString());
+                    String message = String.format("Verification for class `%s` failed for method `%s` with message `%s`", getExternalName(), m.getNameAsString(), e.getMessage());
                     switch (e.kind()) {
                         case Verify:
                             throw meta.throwExceptionWithMessage(meta.java_lang_VerifyError, message);
@@ -1237,17 +1283,6 @@ public final class ObjectKlass extends Klass {
     }
 
     @Override
-    public int getModifiers() {
-        // getKlassVersion().getModifiers() introduces a ~10%
-        // perf hit on some benchmarks, so put behind a check
-        if (getContext().advancedRedefinitionEnabled()) {
-            return getKlassVersion().getModifiers();
-        } else {
-            return super.getModifiers();
-        }
-    }
-
-    @Override
     public Klass[] getSuperTypes() {
         return getKlassVersion().getSuperTypes();
     }
@@ -1563,6 +1598,14 @@ public final class ObjectKlass extends Klass {
             }
         }
         return null;
+    }
+
+    public String getSourceFile() {
+        return getKlassVersion().getSourceFile();
+    }
+
+    public Source getSource() {
+        return getKlassVersion().getSource();
     }
 
     public final class KlassVersion {
@@ -1882,6 +1925,21 @@ public final class ObjectKlass extends Klass {
                 supertypes[depth] = this.getKlass();
             }
             return new HierarchyInfo(supertypes, depth, iKlassTable);
+        }
+
+        public String getSourceFile() {
+            SourceFileAttribute sfa = (SourceFileAttribute) getAttribute(Name.SourceFile);
+            if (sfa == null) {
+                return null;
+            }
+            return getConstantPool().utf8At(sfa.getSourceFileIndex()).toString();
+        }
+
+        public Source getSource() {
+            if (source == null) {
+                source = getContext().findOrCreateSource(ObjectKlass.this);
+            }
+            return source;
         }
     }
 }

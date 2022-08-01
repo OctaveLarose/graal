@@ -25,6 +25,7 @@
 package com.oracle.svm.truffle.api;
 
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.function.Supplier;
 
 import org.graalvm.collections.EconomicMap;
 import org.graalvm.compiler.graph.SourceLanguagePositionProvider;
@@ -43,6 +44,7 @@ import org.graalvm.compiler.truffle.compiler.PartialEvaluator;
 import org.graalvm.compiler.truffle.compiler.PartialEvaluatorConfiguration;
 import org.graalvm.compiler.truffle.compiler.TruffleCompilerConfiguration;
 import org.graalvm.compiler.truffle.compiler.TruffleTierContext;
+import org.graalvm.compiler.truffle.compiler.substitutions.KnownTruffleTypes;
 import org.graalvm.nativeimage.Platform;
 import org.graalvm.nativeimage.Platforms;
 
@@ -54,15 +56,16 @@ public class SubstratePartialEvaluator extends PartialEvaluator {
     private final ConcurrentHashMap<SpecialCallTargetCacheKey, Object> specialCallTargetCache;
 
     @Platforms(Platform.HOSTED_ONLY.class)
-    public SubstratePartialEvaluator(TruffleCompilerConfiguration config, GraphBuilderConfiguration graphBuilderConfigForRoot) {
-        super(config, graphBuilderConfigForRoot, new SubstrateKnownTruffleTypes(config.lastTier().providers().getMetaAccess()));
+    public SubstratePartialEvaluator(TruffleCompilerConfiguration config, GraphBuilderConfiguration graphBuilderConfigForRoot, KnownTruffleTypes knownTruffleTypes) {
+        super(config, graphBuilderConfigForRoot, knownTruffleTypes);
         this.invocationPluginsCache = new ConcurrentHashMap<>();
         this.specialCallTargetCache = new ConcurrentHashMap<>();
     }
 
     @Override
     protected PEGraphDecoder createGraphDecoder(TruffleTierContext context, InvocationPlugins invocationPlugins, InlineInvokePlugin[] inlineInvokePlugins, ParameterPlugin parameterPlugin,
-                    NodePlugin[] nodePlugins, SourceLanguagePositionProvider sourceLanguagePositionProvider, EconomicMap<ResolvedJavaMethod, EncodedGraph> graphCache) {
+                    NodePlugin[] nodePlugins, SourceLanguagePositionProvider sourceLanguagePositionProvider, EconomicMap<ResolvedJavaMethod, EncodedGraph> graphCache,
+                    Supplier<AutoCloseable> createCachedGraphScope) {
         return new SubstratePEGraphDecoder(config.architecture(), context.graph, config.lastTier().providers().copyWith(compilationLocalConstantProvider), loopExplosionPlugin, invocationPlugins,
                         inlineInvokePlugins, parameterPlugin, nodePlugins, callInlined, sourceLanguagePositionProvider, specialCallTargetCache, invocationPluginsCache);
     }

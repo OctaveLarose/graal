@@ -9,7 +9,7 @@ Follow these steps to install Oracle GraalVM Enterprise Edition on the Linux ope
 
 1. Navigate to [Oracle GraalVM Downloads](https://www.oracle.com/downloads/graalvm-downloads.html).
 2. Select the preferable GraalVM Enterprise version in the Release Version dropdown, **11** or **17** for the Java version, **Linux** for the operating system, and **amd64** for the architecture.
-3. Click on the **GraalVM Enterprise Core** download link. Before you download a file, you must accept the [Oracle License Agreement](https://www.oracle.com/downloads/licenses/graalvm-otn-license.html) in the popup window.
+3. Click on the **GraalVM Enterprise JDK** download link. Before you download a file, you must accept the [Oracle License Agreement](https://www.oracle.com/downloads/licenses/graalvm-otn-license.html) in the popup window.
 4. When the download button becomes active, press it to start downloading **graalvm-ee-java<version>-linux-amd64-<version>.tar.gz**.
 5. Change the directory to the location where you want to install GraalVM Enterprise, then move the _.tar.gz_ archive to it.
 6. Unzip the archive:
@@ -31,7 +31,7 @@ Optionally, you can specify GraalVM Enterprise as the default JRE or JDK install
 
 ## Supported Functionalities
 
-The base distribution of GraalVM Enterprise for Linux (AMD64) platforms includes Oracle JDK with the GraalVM compiler enabled, LLVM and JavaScript runtimes.
+The base distribution of GraalVM Enterprise for Linux (AMD64) platforms includes Oracle JDK with the GraalVM compiler enabled.
 The base installation can be extended with:
 
 Tools/Utilities:
@@ -40,9 +40,11 @@ Tools/Utilities:
 
 Runtimes:
 * [Java on Truffle](../../reference-manual/java-on-truffle/README.md) -- a Java Virtual Machine implementation based on a Truffle interpreter for GraalVM
-* [Node.js](../../reference-manual/js/README.md) -- Node.js v16.14.2 compatible
+* [JavaScript](../../reference-manual/js/README.md) -- JavaScript runtime
+* [Node.js](../../reference-manual/js/NodeJS.md) -- Node.js v16.14.2 compatible
+* [LLVM](../../reference-manual/llvm/README.md) -- LLVM runtime
 * [Python](../../reference-manual/python/README.md) -- Python 3.8.5 compatible
-* [Ruby](../../reference-manual/ruby/README.md) -- Ruby 3.0.2 compatible
+* [Ruby](../../reference-manual/ruby/README.md) -- Ruby 3.0.3 compatible
 * [R](/../../reference-manual/r/README.md) -- GNU R 4.0.3 compatible
 * [Wasm](../../reference-manual/wasm/README.md) -- WebAssembly (Wasm)
 ​

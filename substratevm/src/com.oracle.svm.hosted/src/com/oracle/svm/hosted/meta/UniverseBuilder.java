@@ -91,6 +91,7 @@ import com.oracle.svm.hosted.HostedConfiguration;
 import com.oracle.svm.hosted.NativeImageOptions;
 import com.oracle.svm.hosted.annotation.CustomSubstitutionMethod;
 import com.oracle.svm.hosted.config.HybridLayout;
+import com.oracle.svm.hosted.heap.PodSupport;
 import com.oracle.svm.hosted.substitute.AnnotationSubstitutionProcessor;
 import com.oracle.svm.hosted.substitute.ComputedValueField;
 import com.oracle.svm.hosted.substitute.DeletedMethod;
@@ -179,10 +180,11 @@ public class UniverseBuilder {
 
             processFieldLocations();
 
+            hUniverse.uniqueHostedMethodNames.clear();
             hUniverse.orderedMethods = new ArrayList<>(hUniverse.methods.values());
-            Collections.sort(hUniverse.orderedMethods);
+            Collections.sort(hUniverse.orderedMethods, HostedUniverse.METHOD_COMPARATOR);
             hUniverse.orderedFields = new ArrayList<>(hUniverse.fields.values());
-            Collections.sort(hUniverse.orderedFields);
+            Collections.sort(hUniverse.orderedFields, HostedUniverse.FIELD_COMPARATOR_RELAXED);
             profilingInformationBuildTask.join();
         }
     }
@@ -293,7 +295,7 @@ public class UniverseBuilder {
             sHandlers[i] = new ExceptionHandler(h.getStartBCI(), h.getEndBCI(), h.getHandlerBCI(), h.catchTypeCPI(), catchType);
         }
 
-        HostedMethod sMethod = new HostedMethod(hUniverse, aMethod, holder, signature, constantPool, sHandlers, null);
+        HostedMethod sMethod = HostedMethod.create(hUniverse, aMethod, holder, signature, constantPool, sHandlers, null);
         assert !hUniverse.methods.containsKey(aMethod);
         hUniverse.methods.put(aMethod, sMethod);
 
@@ -400,6 +402,18 @@ public class UniverseBuilder {
         layoutInstanceFields(hUniverse.getObjectClass(), ConfigurationValues.getObjectLayout().getFirstFieldOffset(), new HostedField[0]);
     }
 
+    private static boolean mustReserveLengthField(HostedInstanceClass clazz) {
+        if (PodSupport.isPresent() && PodSupport.singleton().mustReserveLengthField(clazz.getJavaClass())) {
+            return true;
+        }
+        if (HybridLayout.isHybrid(clazz)) {
+            // A pod ancestor subclassing Object must have already reserved a length field, unless
+            // the pod subclasses Object itself, in which case we would have returned true earlier.
+            return !PodSupport.isPresent() || !PodSupport.singleton().isPodClass(clazz.getJavaClass());
+        }
+        return false;
+    }
+
     private void layoutInstanceFields(HostedInstanceClass clazz, int superSize, HostedField[] superFields) {
         ArrayList<HostedField> rawFields = new ArrayList<>();
         ArrayList<HostedField> orderedFields = new ArrayList<>();
@@ -413,15 +427,14 @@ public class UniverseBuilder {
             startSize = DeoptimizedFrame.getScratchSpaceOffset() + layout.getDeoptScratchSpace();
         }
 
-        if (HybridLayout.isHybrid(clazz)) {
-            /* Set start after array length field */
-            assert startSize == layout.getArrayLengthOffset();
+        if (mustReserveLengthField(clazz)) {
+            VMError.guarantee(startSize == layout.getArrayLengthOffset());
             int fieldSize = layout.sizeInBytes(JavaKind.Int);
             startSize += fieldSize;
 
             /*
              * Set start after typecheck slots field, if the hybrid class has one. For now, only
-             * DynamicHubs can this field(s).
+             * DynamicHubs can have such field(s).
              */
             if (clazz.equals(hMetaAccess.lookupJavaType(DynamicHub.class))) {
                 /* Each type check id slot is 2 bytes. */
@@ -430,7 +443,7 @@ public class UniverseBuilder {
         }
 
         // Sort so that a) all Object fields are consecutive, and b) bigger types come first.
-        Collections.sort(rawFields);
+        Collections.sort(rawFields, HostedUniverse.FIELD_COMPARATOR_RELAXED);
 
         int nextOffset = startSize;
         while (rawFields.size() > 0) {
@@ -509,7 +522,7 @@ public class UniverseBuilder {
         }
 
         // Sort so that a) all Object fields are consecutive, and b) bigger types come first.
-        Collections.sort(fields);
+        Collections.sort(fields, HostedUniverse.FIELD_COMPARATOR_RELAXED);
 
         ObjectLayout layout = ConfigurationValues.getObjectLayout();
 
@@ -574,7 +587,7 @@ public class UniverseBuilder {
         for (HostedType type : hUniverse.getTypes()) {
             List<HostedMethod> list = methodsOfType[type.getTypeID()];
             if (list != null) {
-                Collections.sort(list);
+                Collections.sort(list, HostedUniverse.METHOD_COMPARATOR);
                 type.allDeclaredMethods = list.toArray(new HostedMethod[list.size()]);
             } else {
                 type.allDeclaredMethods = noMethods;
@@ -587,7 +600,7 @@ public class UniverseBuilder {
 
             // Reuse the implementations from the analysis method.
             method.implementations = hUniverse.lookup(method.wrapped.getImplementations());
-            Arrays.sort(method.implementations);
+            Arrays.sort(method.implementations, HostedUniverse.METHOD_COMPARATOR);
         }
     }
 
@@ -735,8 +748,11 @@ public class UniverseBuilder {
                  * Methods with 1 implementations do not need a vtable because invokes can be done
                  * as direct calls without the need for a vtable. Methods with 0 implementations are
                  * unreachable.
+                 *
+                 * Methods manually registered as virtual root methods always need a vtable slot,
+                 * even if there are 0 or 1 implementations.
                  */
-                if (method.implementations.length > 1) {
+                if (method.implementations.length > 1 || method.wrapped.isVirtualRootMethod()) {
                     /*
                      * Find a suitable vtable slot for the method, taking the existing vtable
                      * assignments into account.
@@ -802,27 +818,28 @@ public class UniverseBuilder {
          * implementation method can have multiple slots because of interfaces. We compute the
          * intersection of the slot sets for all implementation methods.
          */
-        Set<Integer> resultSlots = vtablesSlots.get(method.implementations[0]);
-        for (HostedMethod impl : method.implementations) {
-            Set<Integer> implSlots = vtablesSlots.get(impl);
-            if (implSlots == null) {
-                resultSlots = null;
-                break;
+        if (method.implementations.length > 0) {
+            Set<Integer> resultSlots = vtablesSlots.get(method.implementations[0]);
+            for (HostedMethod impl : method.implementations) {
+                Set<Integer> implSlots = vtablesSlots.get(impl);
+                if (implSlots == null) {
+                    resultSlots = null;
+                    break;
+                }
+                resultSlots.retainAll(implSlots);
             }
-            resultSlots.retainAll(implSlots);
-        }
-        if (resultSlots != null && !resultSlots.isEmpty()) {
-            /*
-             * All implementations already have the same vtable slot assigned, so we can re-use
-             * that. If we have multiple candidates, we use the slot with the lowest number.
-             */
-            int resultSlot = Integer.MAX_VALUE;
-            for (int slot : resultSlots) {
-                resultSlot = Math.min(resultSlot, slot);
+            if (resultSlots != null && !resultSlots.isEmpty()) {
+                /*
+                 * All implementations already have the same vtable slot assigned, so we can re-use
+                 * that. If we have multiple candidates, we use the slot with the lowest number.
+                 */
+                int resultSlot = Integer.MAX_VALUE;
+                for (int slot : resultSlots) {
+                    resultSlot = Math.min(resultSlot, slot);
+                }
+                return resultSlot;
             }
-            return resultSlot;
         }
-
         /*
          * No slot found, we need to compute a new one. Check the whole subtype hierarchy for
          * constraints using bitset union, and then use the lowest slot number that is available in
@@ -886,20 +903,21 @@ public class UniverseBuilder {
             hUniverse.bb.getHeartbeatCallback().run();
 
             int layoutHelper;
+            boolean canInstantiateAsInstance = false;
             int monitorOffset = 0;
             if (type.isInstanceClass()) {
                 HostedInstanceClass instanceClass = (HostedInstanceClass) type;
                 if (instanceClass.isAbstract()) {
                     layoutHelper = LayoutEncoding.forAbstract();
                 } else if (HybridLayout.isHybrid(type)) {
-                    HybridLayout<?> hybridLayout = new HybridLayout<>(instanceClass, ol);
+                    HybridLayout<?> hybridLayout = new HybridLayout<>(instanceClass, ol, hMetaAccess);
                     JavaKind storageKind = hybridLayout.getArrayElementStorageKind();
                     boolean isObject = (storageKind == JavaKind.Object);
-                    layoutHelper = LayoutEncoding.forArray(type, isObject, hybridLayout.getArrayBaseOffset(), ol.getArrayIndexShift(storageKind));
-                } else if (instanceClass.getJavaClass().equals(StoredContinuation.class)) {
-                    layoutHelper = LayoutEncoding.forStoredContinuation();
+                    layoutHelper = LayoutEncoding.forHybrid(type, isObject, hybridLayout.getArrayBaseOffset(), ol.getArrayIndexShift(storageKind));
+                    canInstantiateAsInstance = type.isInstantiated() && HybridLayout.canInstantiateAsInstance(type);
                 } else {
-                    layoutHelper = LayoutEncoding.forInstance(type, ConfigurationValues.getObjectLayout().alignUp(instanceClass.getInstanceSize()));
+                    layoutHelper = LayoutEncoding.forPureInstance(type, ConfigurationValues.getObjectLayout().alignUp(instanceClass.getInstanceSize()));
+                    canInstantiateAsInstance = type.isInstantiated();
                 }
                 monitorOffset = instanceClass.getMonitorFieldOffset();
             } else if (type.isArray()) {
@@ -939,8 +957,8 @@ public class UniverseBuilder {
             }
 
             DynamicHub hub = type.getHub();
-            hub.setData(layoutHelper, type.getTypeID(), monitorOffset, type.getTypeCheckStart(), type.getTypeCheckRange(), type.getTypeCheckSlot(), type.getTypeCheckSlots(),
-                            vtable, referenceMapIndex, type.isInstantiated());
+            hub.setData(layoutHelper, type.getTypeID(), monitorOffset, type.getTypeCheckStart(), type.getTypeCheckRange(), type.getTypeCheckSlot(),
+                            type.getTypeCheckSlots(), vtable, referenceMapIndex, type.isInstantiated(), canInstantiateAsInstance);
         }
     }
 

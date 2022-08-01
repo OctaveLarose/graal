@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2021, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2021, 2022, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -27,13 +27,11 @@ package org.graalvm.compiler.truffle.test.strings;
 import java.util.ArrayList;
 import java.util.List;
 
-import org.graalvm.compiler.replacements.ArrayIndexOfNode;
+import org.graalvm.compiler.replacements.nodes.ArrayIndexOfNode;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.junit.runners.Parameterized;
 import org.junit.runners.Parameterized.Parameters;
-
-import jdk.vm.ci.meta.ResolvedJavaMethod;
 
 @RunWith(Parameterized.class)
 public class TStringOpsIndexOfTwoConsecutiveTest extends TStringOpsTest<ArrayIndexOfNode> {
@@ -110,9 +108,7 @@ public class TStringOpsIndexOfTwoConsecutiveTest extends TStringOpsTest<ArrayInd
     }
 
     @Test
-    public void testIndexOfTwoConsecutive() throws ClassNotFoundException {
-        ResolvedJavaMethod method = getTStringOpsMethod("indexOf2ConsecutiveWithStrideIntl",
-                        Object.class, int.class, int.class, int.class, int.class, int.class, int.class);
-        test(method, null, DUMMY_LOCATION, arrayA, offsetA, lengthA, strideA, fromIndexA, v0, v1);
+    public void testIndexOfTwoConsecutive() {
+        test(getIndexOf2ConsecutiveWithStrideIntl(), null, DUMMY_LOCATION, arrayA, offsetA, lengthA, strideA, fromIndexA, v0, v1);
     }
 }

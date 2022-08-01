@@ -116,12 +116,20 @@ public abstract class StrengthenGraphs extends AbstractAnalysisResultsBuilder {
         super(bb, converter);
     }
 
+    private PointsToAnalysis getAnalysis() {
+        return ((PointsToAnalysis) bb);
+    }
+
     @Override
     @SuppressWarnings("try")
     public StaticAnalysisResults makeOrApplyResults(AnalysisMethod m) {
-        DebugContext debug = new DebugContext.Builder(bb.getOptions(), new GraalDebugHandlersFactory(bb.getProviders().getSnippetReflection())).build();
         PointsToAnalysisMethod method = PointsToAnalysis.assertPointsToAnalysisMethod(m);
-        StructuredGraph graph = method.decodeAnalyzedGraph(debug, method.getTypeFlow().getOriginalMethodFlows().getNodeFlows().getKeys());
+        MethodTypeFlow methodTypeFlow = method.getTypeFlow();
+        if (!methodTypeFlow.flowsGraphCreated()) {
+            return StaticAnalysisResults.NO_RESULTS;
+        }
+        DebugContext debug = new DebugContext.Builder(bb.getOptions(), new GraalDebugHandlersFactory(bb.getProviders().getSnippetReflection())).build();
+        StructuredGraph graph = method.decodeAnalyzedGraph(debug, methodTypeFlow.getMethodFlowsGraph().getNodeFlows().getKeys());
         if (graph != null) {
             graph.resetDebug(debug);
             try (DebugContext.Scope s = debug.scope("StrengthenGraphs", graph);
@@ -135,7 +143,7 @@ public abstract class StrengthenGraphs extends AbstractAnalysisResultsBuilder {
         }
 
         /* Ensure that the temporarily decoded graph is not kept alive via the node references. */
-        var cursor = method.getTypeFlow().getOriginalMethodFlows().getNodeFlows().getEntries();
+        var cursor = methodTypeFlow.getMethodFlowsGraph().getNodeFlows().getEntries();
         while (cursor.advance()) {
             cursor.getKey().clear();
         }
@@ -194,7 +202,7 @@ public abstract class StrengthenGraphs extends AbstractAnalysisResultsBuilder {
             this.methodFlow = method.getTypeFlow();
             this.createdPiNodes = new NodeBitMap(graph);
 
-            MethodFlowsGraph originalFlows = methodFlow.getOriginalMethodFlows();
+            MethodFlowsGraph originalFlows = methodFlow.getMethodFlowsGraph();
             parameterFlows = originalFlows.getParameters();
             nodeFlows = new NodeMap<>(graph);
             var cursor = originalFlows.getNodeFlows().getEntries();
@@ -311,6 +319,7 @@ public abstract class StrengthenGraphs extends AbstractAnalysisResultsBuilder {
         }
 
         private void handleInvoke(Invoke invoke, SimplifierTool tool) {
+            PointsToAnalysis pta = getAnalysis();
             FixedNode node = invoke.asFixedNode();
             MethodCallTargetNode callTarget = (MethodCallTargetNode) invoke.callTarget();
 
@@ -349,8 +358,8 @@ public abstract class StrengthenGraphs extends AbstractAnalysisResultsBuilder {
             } else {
                 TypeState receiverTypeState = null;
                 /* If the receiver flow is saturated, its exact type state does not matter. */
-                if (invokeFlow.getTargetMethod().hasReceiver() && !methodFlow.isSaturated(bb, invokeFlow.getReceiver())) {
-                    receiverTypeState = methodFlow.foldTypeFlow(bb, invokeFlow.getReceiver());
+                if (invokeFlow.getTargetMethod().hasReceiver() && !methodFlow.isSaturated(pta, invokeFlow.getReceiver())) {
+                    receiverTypeState = methodFlow.foldTypeFlow(pta, invokeFlow.getReceiver());
                 }
 
                 JavaTypeProfile typeProfile = makeTypeProfile(receiverTypeState);
@@ -442,10 +451,11 @@ public abstract class StrengthenGraphs extends AbstractAnalysisResultsBuilder {
         }
 
         private boolean isUnreachable(Node branch) {
+            PointsToAnalysis pta = getAnalysis();
             TypeFlow<?> branchFlow = getNodeFlow(branch);
             return branchFlow != null &&
-                            !methodFlow.isSaturated(bb, branchFlow) &&
-                            methodFlow.foldTypeFlow(bb, branchFlow).isEmpty();
+                            !methodFlow.isSaturated(pta, branchFlow) &&
+                            methodFlow.foldTypeFlow(pta, branchFlow).isEmpty();
         }
 
         private void updateStampInPlace(ValueNode node, Stamp newStamp, SimplifierTool tool) {
@@ -494,6 +504,7 @@ public abstract class StrengthenGraphs extends AbstractAnalysisResultsBuilder {
         }
 
         private Stamp strengthenStampFromTypeFlow(ValueNode node, TypeFlow<?> nodeFlow, FixedWithNextNode anchorPoint, SimplifierTool tool) {
+            PointsToAnalysis pta = getAnalysis();
             if (node.getStackKind() != JavaKind.Object) {
                 return null;
             }
@@ -504,12 +515,12 @@ public abstract class StrengthenGraphs extends AbstractAnalysisResultsBuilder {
                  */
                 return null;
             }
-            if (methodFlow.isSaturated(bb, nodeFlow)) {
+            if (methodFlow.isSaturated(pta, nodeFlow)) {
                 /* The type flow is saturated, its type state does not matter. */
                 return null;
             }
 
-            TypeState nodeTypeState = methodFlow.foldTypeFlow(bb, nodeFlow);
+            TypeState nodeTypeState = methodFlow.foldTypeFlow(pta, nodeFlow);
             node.inferStamp();
             ObjectStamp oldStamp = (ObjectStamp) node.stamp(NodeView.DEFAULT);
             AnalysisType oldType = (AnalysisType) oldStamp.type();
@@ -522,7 +533,7 @@ public abstract class StrengthenGraphs extends AbstractAnalysisResultsBuilder {
              * stamp is already more precise than the static analysis results.
              */
             List<AnalysisType> typeStateTypes = new ArrayList<>(nodeTypeState.typesCount());
-            for (AnalysisType typeStateType : nodeTypeState.types(bb)) {
+            for (AnalysisType typeStateType : nodeTypeState.types(pta)) {
                 if (oldType == null || (oldStamp.isExactType() ? oldType.equals(typeStateType) : oldType.isAssignableFrom(typeStateType))) {
                     typeStateTypes.add(typeStateType);
                 }

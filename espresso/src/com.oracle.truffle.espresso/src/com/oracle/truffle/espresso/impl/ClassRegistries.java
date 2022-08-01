@@ -33,7 +33,6 @@ import java.util.WeakHashMap;
 import java.util.concurrent.ConcurrentHashMap;
 
 import com.oracle.truffle.api.CompilerAsserts;
-import com.oracle.truffle.api.CompilerDirectives;
 import com.oracle.truffle.api.CompilerDirectives.TruffleBoundary;
 import com.oracle.truffle.espresso.descriptors.Symbol;
 import com.oracle.truffle.espresso.descriptors.Symbol.Type;
@@ -48,7 +47,6 @@ import com.oracle.truffle.espresso.vm.InterpreterToVM;
 
 public final class ClassRegistries {
 
-    @CompilerDirectives.CompilationFinal //
     private ModuleTable.ModuleEntry javaBaseModule;
 
     private final ClassRegistry bootClassRegistry;
@@ -293,10 +291,10 @@ public final class ClassRegistries {
 
     public void processFixupList(StaticObject javaBase) {
         for (PrimitiveKlass k : context.getMeta().PRIMITIVE_KLASSES) {
-            context.getMeta().java_lang_Class_module.setObject(k.mirror(), javaBase);
+            context.getMeta().java_lang_Class_module.setObject(k.initializeEspressoClass(), javaBase);
         }
         for (Klass k : fixupModuleList) {
-            context.getMeta().java_lang_Class_module.setObject(k.mirror(), javaBase);
+            context.getMeta().java_lang_Class_module.setObject(k.initializeEspressoClass(), javaBase);
         }
         fixupModuleList = null;
     }

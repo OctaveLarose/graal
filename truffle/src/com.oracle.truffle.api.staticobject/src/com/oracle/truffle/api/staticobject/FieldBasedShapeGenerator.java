@@ -91,6 +91,7 @@ final class FieldBasedShapeGenerator<T> extends ShapeGenerator<T> {
         return FieldBasedStaticShape.create(generatedStorageClass, generatedFactoryClass, safetyChecks);
     }
 
+    @SuppressWarnings("deprecation"/* JDK-8277863 */)
     private static int getObjectFieldOffset(Class<?> c, String fieldName) {
         try {
             return Math.toIntExact(UNSAFE.objectFieldOffset(c.getField(fieldName)));
@@ -123,12 +124,12 @@ final class FieldBasedShapeGenerator<T> extends ShapeGenerator<T> {
     }
 
     private static void addFactoryConstructor(ClassVisitor cv) {
-        MethodVisitor mv = cv.visitMethod(ACC_PUBLIC, "<init>", "(II)V", null, null);
+        MethodVisitor mv = cv.visitMethod(ACC_PUBLIC, "<init>", "()V", null, null);
         mv.visitCode();
         mv.visitVarInsn(ALOAD, 0);
         mv.visitMethodInsn(INVOKESPECIAL, Type.getInternalName(Object.class), "<init>", "()V", false);
         mv.visitInsn(RETURN);
-        mv.visitMaxs(1, 3);
+        mv.visitMaxs(1, 1);
         mv.visitEnd();
     }
 

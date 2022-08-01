@@ -35,10 +35,10 @@ import org.graalvm.nativeimage.c.type.CIntPointer;
 import org.graalvm.nativeimage.c.type.WordPointer;
 import org.graalvm.word.PointerBase;
 
-import com.oracle.svm.jni.nativeapi.JNIFieldId;
-import com.oracle.svm.jni.nativeapi.JNIMethodId;
-import com.oracle.svm.jni.nativeapi.JNINativeInterface;
-import com.oracle.svm.jni.nativeapi.JNIObjectHandle;
+import com.oracle.svm.core.jni.headers.JNIFieldId;
+import com.oracle.svm.core.jni.headers.JNIMethodId;
+import com.oracle.svm.core.jni.headers.JNINativeInterface;
+import com.oracle.svm.core.jni.headers.JNIObjectHandle;
 
 @CStruct(value = "jvmtiInterface_1")
 @CContext(JvmtiDirectives.class)
@@ -158,11 +158,13 @@ public interface JvmtiInterface extends PointerBase {
         JvmtiError invoke(JvmtiEnv env, JNIMethodId method, long location);
     }
 
+    /*
+     * Note that the GetLocal*() functions execute a safepoint operation even for the current thread
+     * and we have seen it cause serious scalability issues, presumably from the fix of JDK-8249293.
+     */
+
     @CField("GetLocalObject")
     GetLocalFunctionPointer GetLocalObject();
-
-    @CField("GetLocalInt")
-    GetLocalFunctionPointer GetLocalInt();
 
     interface GetLocalFunctionPointer extends CFunctionPointer {
         @InvokeCFunctionPointer

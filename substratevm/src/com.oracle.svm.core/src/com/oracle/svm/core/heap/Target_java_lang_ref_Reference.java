@@ -29,7 +29,7 @@ import java.lang.ref.Reference;
 import java.lang.reflect.Field;
 import java.util.function.BooleanSupplier;
 
-import org.graalvm.compiler.api.directives.GraalDirectives;
+import org.graalvm.compiler.nodes.java.ReachabilityFenceNode;
 import org.graalvm.nativeimage.Platform;
 import org.graalvm.nativeimage.Platforms;
 
@@ -100,7 +100,7 @@ public final class Target_java_lang_ref_Reference<T> {
 
     @SuppressWarnings("unused") //
     @Alias @RecomputeFieldValue(kind = RecomputeFieldValue.Kind.Reset) //
-    @ExcludeFromReferenceMap(reason = "Some GCs process this field manually.", onlyIf = NotSerialGC.class) //
+    @ExcludeFromReferenceMap(reason = "Some GCs process this field manually.", onlyIf = NotSerialNotEpsilonGC.class) //
     transient Target_java_lang_ref_Reference<?> discovered;
 
     @Alias @RecomputeFieldValue(kind = RecomputeFieldValue.Kind.Custom, declClass = ComputeQueueValue.class) //
@@ -165,10 +165,11 @@ public final class Target_java_lang_ref_Reference<T> {
     @KeepOriginal //
     protected native Object clone() throws CloneNotSupportedException;
 
+    /** Intrinsified to a {@link ReachabilityFenceNode}. */
     @Substitute //
     @SuppressWarnings("unused")
     static void reachabilityFence(Object ref) {
-        GraalDirectives.blackhole(ref);
+        throw VMError.shouldNotReachHere("Unreachable, intrinsified during bytecode parsing");
     }
 
     @KeepOriginal
@@ -243,9 +244,9 @@ class ComputeQueueValue implements CustomFieldValueComputer {
 }
 
 @Platforms(Platform.HOSTED_ONLY.class)
-class NotSerialGC implements BooleanSupplier {
+class NotSerialNotEpsilonGC implements BooleanSupplier {
     @Override
     public boolean getAsBoolean() {
-        return !SubstrateOptions.UseSerialGC.getValue();
+        return !SubstrateOptions.UseSerialGC.getValue() && !SubstrateOptions.UseEpsilonGC.getValue();
     }
 }

@@ -697,9 +697,12 @@ public abstract class TruffleLanguage<C> {
      * non-deterministic and/or not respect the order specified by language dependencies.
      * <p>
      * In case {@link TruffleContext#closeExited(Node, int)} is called during a
-     * {@link ExitMode#NATURAL natural exit notification}, it is ignored. In case it is called
-     * during a {@link ExitMode#HARD hard exit notification}, it just throws the special
-     * {@link ThreadDeath} exit exception, which is then just logged as described above.
+     * {@link ExitMode#NATURAL natural exit} notification, natural exit notifications for remaining
+     * language contexts are not executed and the {@link ExitMode#HARD hard exit} process starts by
+     * executing {@link ExitMode#HARD hard exit} notifications. In case
+     * {@link TruffleContext#closeExited(Node, int)} is called during a {@link ExitMode#HARD hard
+     * exit} notification, it just throws the special {@link ThreadDeath} exit exception, which is
+     * then just logged as described above.
      * <p>
      * In case the underlying polyglot context is cancelled by e.g.
      * {@link TruffleContext#closeCancelled(Node, String)} during exit notifications, guest code
@@ -1531,7 +1534,7 @@ public abstract class TruffleLanguage<C> {
      */
     protected final String getLanguageHome() {
         try {
-            return LanguageAccessor.engineAccess().getLanguageHome(LanguageAccessor.nodesAccess().getPolyglotLanguage(languageInfo));
+            return ENGINE.getLanguageHome(languageInfo);
         } catch (Throwable t) {
             throw Env.engineToLanguageException(t);
         }
@@ -1551,7 +1554,8 @@ public abstract class TruffleLanguage<C> {
      * @since 20.1.0
      */
     protected final int getAsynchronousStackDepth() {
-        return LanguageAccessor.engineAccess().getAsynchronousStackDepth(LanguageAccessor.nodesAccess().getPolyglotLanguage(languageInfo));
+        assert polyglotLanguageInstance != null : "getAsynchronousStackDepth not supported for host language";
+        return LanguageAccessor.engineAccess().getAsynchronousStackDepth(polyglotLanguageInstance);
     }
 
     /**
@@ -2747,14 +2751,14 @@ public abstract class TruffleLanguage<C> {
 
         private abstract static class TruffleFileFactory<P> implements BiFunction<P, FileSystemContext, TruffleFile> {
 
-            static final TruffleFileFactory<String> PATH = new TruffleFileFactory<String>() {
+            static final TruffleFileFactory<String> PATH = new TruffleFileFactory<>() {
                 @Override
                 Path parsePath(String path, FileSystemContext fileSystemContext) {
                     return fileSystemContext.fileSystem.parsePath(path);
                 }
             };
 
-            static final TruffleFileFactory<URI> URI = new TruffleFileFactory<URI>() {
+            static final TruffleFileFactory<URI> URI = new TruffleFileFactory<>() {
                 @Override
                 public Path parsePath(URI uri, FileSystemContext fileSystemContext) {
                     return fileSystemContext.fileSystem.parsePath(uri);
@@ -3469,13 +3473,6 @@ public abstract class TruffleLanguage<C> {
         }
 
         /**
-         * @since 19.0
-         * @deprecated in 21.3, use {@link #get(Node)} instead.
-         */
-        @Deprecated(since = "21.3")
-        public abstract L get();
-
-        /**
          * Returns the current language instance associated with the current thread. An enclosing
          * node should be provided as parameter if available, otherwise <code>null</code> may be
          * provided. This method is designed to be called safely from compiled code paths. In order
@@ -3512,7 +3509,7 @@ public abstract class TruffleLanguage<C> {
          */
         public static <T extends TruffleLanguage<?>> LanguageReference<T> create(Class<T> languageClass) {
             Objects.requireNonNull(languageClass);
-            return LanguageAccessor.ENGINE.createLanguageReference(null, languageClass);
+            return LanguageAccessor.ENGINE.createLanguageReference(languageClass);
         }
 
     }
@@ -3594,14 +3591,6 @@ public abstract class TruffleLanguage<C> {
         }
 
         /**
-         * @since 0.25
-         * @deprecated in 21.3, use {@link #get(Node)} instead.
-         */
-        @SuppressWarnings("unchecked")
-        @Deprecated(since = "21.3")
-        public abstract C get();
-
-        /**
          * Returns the current language context associated with the current thread. An enclosing
          * node should be provided as parameter if available, otherwise <code>null</code> may be
          * provided. This method is designed to be called safely from compiled code paths. In order
@@ -3637,7 +3626,7 @@ public abstract class TruffleLanguage<C> {
          */
         public static <T extends TruffleLanguage<C>, C> ContextReference<C> create(Class<T> languageClass) {
             Objects.requireNonNull(languageClass);
-            return LanguageAccessor.ENGINE.createContextReference(null, languageClass);
+            return LanguageAccessor.ENGINE.createContextReference(languageClass);
         }
     }
 

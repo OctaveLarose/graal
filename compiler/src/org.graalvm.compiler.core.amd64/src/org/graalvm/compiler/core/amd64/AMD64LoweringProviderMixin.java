@@ -34,6 +34,8 @@ import org.graalvm.compiler.nodes.ValueNode;
 import org.graalvm.compiler.nodes.calc.ConditionalNode;
 import org.graalvm.compiler.nodes.calc.IntegerEqualsNode;
 import org.graalvm.compiler.nodes.calc.SubNode;
+import org.graalvm.compiler.nodes.memory.ExtendableMemoryAccess;
+import org.graalvm.compiler.core.common.memory.MemoryExtendKind;
 import org.graalvm.compiler.nodes.spi.LoweringProvider;
 import org.graalvm.compiler.replacements.nodes.BitScanForwardNode;
 import org.graalvm.compiler.replacements.nodes.BitScanReverseNode;
@@ -69,6 +71,16 @@ public interface AMD64LoweringProviderMixin extends LoweringProvider {
         return true;
     }
 
+    @Override
+    default boolean narrowsUseCastValue() {
+        return false;
+    }
+
+    @Override
+    default boolean supportsFoldingExtendIntoAccess(ExtendableMemoryAccess access, MemoryExtendKind extendKind) {
+        return false;
+    }
+
     /**
      * Performs AMD64-specific lowerings. Returns {@code true} if the given Node {@code n} was
      * lowered, {@code false} otherwise.
@@ -84,7 +96,7 @@ public interface AMD64LoweringProviderMixin extends LoweringProvider {
                 LogicNode compare = IntegerEqualsNode.create(count.getValue(), zero, NodeView.DEFAULT);
                 ValueNode result = new SubNode(ConstantNode.forIntegerKind(JavaKind.Int, kind.getBitCount() - 1), new BitScanReverseNode(count.getValue()));
                 ValueNode conditional = ConditionalNode.create(compare, ConstantNode.forInt(kind.getBitCount()), result, NodeView.DEFAULT);
-                graph.addOrUniqueWithInputs(conditional);
+                conditional = graph.addOrUniqueWithInputs(conditional);
                 count.replaceAndDelete(conditional);
                 return true;
             }
@@ -99,7 +111,7 @@ public interface AMD64LoweringProviderMixin extends LoweringProvider {
                 ValueNode zero = ConstantNode.forIntegerKind(kind, 0, graph);
                 LogicNode compare = IntegerEqualsNode.create(count.getValue(), zero, NodeView.DEFAULT);
                 ValueNode conditional = ConditionalNode.create(compare, ConstantNode.forInt(kind.getBitCount()), new BitScanForwardNode(count.getValue()), NodeView.DEFAULT);
-                graph.addOrUniqueWithInputs(conditional);
+                conditional = graph.addOrUniqueWithInputs(conditional);
                 count.replaceAndDelete(conditional);
                 return true;
             }

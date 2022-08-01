@@ -153,7 +153,11 @@ final class NodeClassImpl extends NodeClass {
          */
         Field[] reflectionFields = new Field[fields.length];
         for (int i = 0; i < fields.length; i++) {
-            reflectionFields[i] = fields[i].field;
+            try {
+                reflectionFields[i] = fields[i].declaringClass.getDeclaredField(fields[i].name);
+            } catch (NoSuchFieldException e) {
+                throw new RuntimeException(e);
+            }
         }
         return reflectionFields;
     }
@@ -209,12 +213,12 @@ final class NodeClassImpl extends NodeClass {
 
     @Override
     protected Class<?> getFieldType(Object field) {
-        return ((NodeFieldData) field).field.getType();
+        return ((NodeFieldData) field).type;
     }
 
     @Override
     protected String getFieldName(Object field) {
-        return ((NodeFieldData) field).field.getName();
+        return ((NodeFieldData) field).name;
     }
 
     @Override
@@ -246,13 +250,18 @@ final class NodeClassImpl extends NodeClass {
     static final class NodeFieldData {
 
         final NodeFieldKind kind;
-        final Field field;
+        final Class<?> type;
+        final String name;
+        final Class<?> declaringClass;
         final long offset;
         final boolean clonable;
 
+        @SuppressWarnings("deprecation"/* JDK-8277863 */)
         NodeFieldData(NodeFieldKind kind, Field field) {
             this.kind = kind;
-            this.field = field;
+            this.type = field.getType();
+            this.name = field.getName();
+            this.declaringClass = field.getDeclaringClass();
             this.offset = UNSAFE.objectFieldOffset(field);
             this.clonable = kind == NodeFieldKind.DATA && NodeCloneable.class.isAssignableFrom(field.getType());
         }
@@ -267,7 +276,6 @@ final class NodeClassImpl extends NodeClass {
         }
 
         private boolean validateAccess(Node receiver, Object value) {
-            Class<?> type = field.getType();
             if (type.isPrimitive() || !type.isInstance(value)) {
                 throw illegalArgumentException(value);
             }
@@ -289,11 +297,11 @@ final class NodeClassImpl extends NodeClass {
         }
 
         private IllegalArgumentException illegalArgumentException(Object value) {
-            return new IllegalArgumentException("Cannot set " + field.getType().getName() + " field " + toString() + " to " + (value == null ? "null" : value.getClass().getName()));
+            return new IllegalArgumentException("Cannot set " + type.getName() + " field " + toString() + " to " + (value == null ? "null" : value.getClass().getName()));
         }
 
         public Object getObject(Node receiver) {
-            if (!field.getType().isPrimitive()) {
+            if (!type.isPrimitive()) {
                 return UNSAFE.getObject(receiver, getOffset());
             } else {
                 throw new IllegalArgumentException();
@@ -301,7 +309,6 @@ final class NodeClassImpl extends NodeClass {
         }
 
         public Object getObjectOrPrimitive(Node node) {
-            Class<?> type = field.getType();
             if (type == boolean.class) {
                 return UNSAFE.getBoolean(node, getOffset());
             } else if (type == byte.class) {
@@ -341,7 +348,7 @@ final class NodeClassImpl extends NodeClass {
 
         @Override
         public String toString() {
-            return field.getDeclaringClass().getName() + "." + field.getName();
+            return declaringClass.getName() + "." + name;
         }
     }
 }

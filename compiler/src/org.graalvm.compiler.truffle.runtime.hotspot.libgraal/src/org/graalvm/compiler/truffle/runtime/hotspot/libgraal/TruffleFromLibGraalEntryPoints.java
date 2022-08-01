@@ -54,6 +54,7 @@ import static org.graalvm.compiler.truffle.common.hotspot.libgraal.TruffleFromLi
 import static org.graalvm.compiler.truffle.common.hotspot.libgraal.TruffleFromLibGraal.Id.GetLanguage;
 import static org.graalvm.compiler.truffle.common.hotspot.libgraal.TruffleFromLibGraal.Id.GetLineNumber;
 import static org.graalvm.compiler.truffle.common.hotspot.libgraal.TruffleFromLibGraal.Id.GetLoopExplosionKind;
+import static org.graalvm.compiler.truffle.common.hotspot.libgraal.TruffleFromLibGraal.Id.IsInliningCutoff;
 import static org.graalvm.compiler.truffle.common.hotspot.libgraal.TruffleFromLibGraal.Id.GetNodeClassName;
 import static org.graalvm.compiler.truffle.common.hotspot.libgraal.TruffleFromLibGraal.Id.GetNodeId;
 import static org.graalvm.compiler.truffle.common.hotspot.libgraal.TruffleFromLibGraal.Id.GetNodeRewritingAssumptionConstant;
@@ -87,8 +88,9 @@ import static org.graalvm.compiler.truffle.common.hotspot.libgraal.TruffleFromLi
 import static org.graalvm.compiler.truffle.common.hotspot.libgraal.TruffleFromLibGraal.Id.OnSuccess;
 import static org.graalvm.compiler.truffle.common.hotspot.libgraal.TruffleFromLibGraal.Id.OnTruffleTierFinished;
 import static org.graalvm.compiler.truffle.common.hotspot.libgraal.TruffleFromLibGraal.Id.RegisterOptimizedAssumptionDependency;
-import static org.graalvm.compiler.truffle.common.hotspot.libgraal.TruffleFromLibGraal.Id.SetCallCount;
-import static org.graalvm.compiler.truffle.common.hotspot.libgraal.TruffleFromLibGraal.Id.SetInlinedCallCount;
+import static org.graalvm.compiler.truffle.common.hotspot.libgraal.TruffleFromLibGraal.Id.SetCallCounts;
+import static org.graalvm.compiler.truffle.common.hotspot.libgraal.TruffleFromLibGraal.Id.IsInInterpreter;
+import static org.graalvm.compiler.truffle.common.hotspot.libgraal.TruffleFromLibGraal.Id.IsTransferToInterpreterMethod;
 
 import java.lang.reflect.Method;
 import java.lang.reflect.Modifier;
@@ -166,6 +168,12 @@ final class TruffleFromLibGraalEntryPoints {
         return ((TruffleCompilerRuntime) truffleRuntime).isSpecializationMethod(method);
     }
 
+    @TruffleFromLibGraal(IsInliningCutoff)
+    static boolean isInliningCutoff(Object truffleRuntime, long methodHandle) {
+        ResolvedJavaMethod method = LibGraal.unhand(ResolvedJavaMethod.class, methodHandle);
+        return ((TruffleCompilerRuntime) truffleRuntime).isInliningCutoff(method);
+    }
+
     @TruffleFromLibGraal(IsBytecodeInterpreterSwitch)
     static boolean isBytecodeInterpreterSwitch(Object truffleRuntime, long methodHandle) {
         ResolvedJavaMethod method = LibGraal.unhand(ResolvedJavaMethod.class, methodHandle);
@@ -176,6 +184,18 @@ final class TruffleFromLibGraalEntryPoints {
     static boolean isBytecodeInterpreterSwitchBoundary(Object truffleRuntime, long methodHandle) {
         ResolvedJavaMethod method = LibGraal.unhand(ResolvedJavaMethod.class, methodHandle);
         return ((TruffleCompilerRuntime) truffleRuntime).isBytecodeInterpreterSwitchBoundary(method);
+    }
+
+    @TruffleFromLibGraal(IsInInterpreter)
+    static boolean isInInterpreter(Object truffleRuntime, long methodHandle) {
+        ResolvedJavaMethod method = LibGraal.unhand(ResolvedJavaMethod.class, methodHandle);
+        return ((TruffleCompilerRuntime) truffleRuntime).isInInterpreter(method);
+    }
+
+    @TruffleFromLibGraal(IsTransferToInterpreterMethod)
+    static boolean isTransferToInterpreterMethod(Object truffleRuntime, long methodHandle) {
+        ResolvedJavaMethod method = LibGraal.unhand(ResolvedJavaMethod.class, methodHandle);
+        return ((TruffleCompilerRuntime) truffleRuntime).isTransferToInterpreterMethod(method);
     }
 
     @TruffleFromLibGraal(IsValueType)
@@ -479,14 +499,9 @@ final class TruffleFromLibGraalEntryPoints {
         ((TruffleInliningData) inliningPlan).addTargetToDequeue((CompilableTruffleAST) compilableTruffleAST);
     }
 
-    @TruffleFromLibGraal(SetCallCount)
-    static void setCallCount(Object inliningPlan, int count) {
-        ((TruffleInliningData) inliningPlan).setCallCount(count);
-    }
-
-    @TruffleFromLibGraal(SetInlinedCallCount)
-    static void setInlinedCallCount(Object inliningPlan, int count) {
-        ((TruffleInliningData) inliningPlan).setInlinedCallCount(count);
+    @TruffleFromLibGraal(SetCallCounts)
+    static void setCallCounts(Object inliningPlan, int total, int inlined) {
+        ((TruffleInliningData) inliningPlan).setCallCounts(total, inlined);
     }
 
     @TruffleFromLibGraal(AddInlinedTarget)

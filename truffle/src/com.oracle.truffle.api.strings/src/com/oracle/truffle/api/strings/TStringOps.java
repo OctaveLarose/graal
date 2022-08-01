@@ -45,6 +45,7 @@ import com.oracle.truffle.api.CompilerAsserts;
 import com.oracle.truffle.api.CompilerDirectives;
 import com.oracle.truffle.api.CompilerDirectives.CompilationFinal;
 import com.oracle.truffle.api.nodes.Node;
+import com.oracle.truffle.api.profiles.ConditionProfile;
 
 import sun.misc.Unsafe;
 
@@ -346,9 +347,9 @@ final class TStringOps {
         final long stubOffset = stubOffset(array, offset, isNative);
         switch (stride) {
             case 0:
-                return runIndexOfWithOrMaskWithStride(location, stubArray, stubOffset, length, 0, isNative, fromIndex, v1, mask1);
+                return (v1 ^ mask1) <= 0xff ? runIndexOfWithOrMaskWithStride(location, stubArray, stubOffset, length, 0, isNative, fromIndex, v1, mask1) : -1;
             case 1:
-                return runIndexOfWithOrMaskWithStride(location, stubArray, stubOffset, length, 1, isNative, fromIndex, v1, mask1);
+                return (v1 ^ mask1) <= 0xffff ? runIndexOfWithOrMaskWithStride(location, stubArray, stubOffset, length, 1, isNative, fromIndex, v1, mask1) : -1;
             default:
                 assert stride == 2;
                 return runIndexOfWithOrMaskWithStride(location, stubArray, stubOffset, length, 2, isNative, fromIndex, v1, mask1);
@@ -366,9 +367,9 @@ final class TStringOps {
         final long stubOffset = stubOffset(array, offset, isNative);
         switch (stride) {
             case 0:
-                return runIndexOf2ConsecutiveWithStride(location, stubArray, stubOffset, length, 0, isNative, fromIndex, v1, v2);
+                return (v1 | v2) <= 0xff ? runIndexOf2ConsecutiveWithStride(location, stubArray, stubOffset, length, 0, isNative, fromIndex, v1, v2) : -1;
             case 1:
-                return runIndexOf2ConsecutiveWithStride(location, stubArray, stubOffset, length, 1, isNative, fromIndex, v1, v2);
+                return (v1 | v2) <= 0xffff ? runIndexOf2ConsecutiveWithStride(location, stubArray, stubOffset, length, 1, isNative, fromIndex, v1, v2) : -1;
             default:
                 assert stride == 2;
                 return runIndexOf2ConsecutiveWithStride(location, stubArray, stubOffset, length, 2, isNative, fromIndex, v1, v2);
@@ -385,9 +386,9 @@ final class TStringOps {
         final long stubOffset = stubOffset(array, offset, isNative);
         switch (stride) {
             case 0:
-                return runIndexOf2ConsecutiveWithOrMaskWithStride(location, stubArray, stubOffset, length, 0, isNative, fromIndex, v1, v2, mask1, mask2);
+                return ((v1 ^ mask1) | (v2 ^ mask2)) <= 0xff ? runIndexOf2ConsecutiveWithOrMaskWithStride(location, stubArray, stubOffset, length, 0, isNative, fromIndex, v1, v2, mask1, mask2) : -1;
             case 1:
-                return runIndexOf2ConsecutiveWithOrMaskWithStride(location, stubArray, stubOffset, length, 1, isNative, fromIndex, v1, v2, mask1, mask2);
+                return ((v1 ^ mask1) | (v2 ^ mask2)) <= 0xffff ? runIndexOf2ConsecutiveWithOrMaskWithStride(location, stubArray, stubOffset, length, 1, isNative, fromIndex, v1, v2, mask1, mask2) : -1;
             default:
                 assert stride == 2;
                 return runIndexOf2ConsecutiveWithOrMaskWithStride(location, stubArray, stubOffset, length, 2, isNative, fromIndex, v1, v2, mask1, mask2);
@@ -514,99 +515,17 @@ final class TStringOps {
         validateRegion(stubArrayB, offsetB, lengthCMP, strideB, isNativeB);
         final long stubOffsetA = stubOffset(arrayA, offsetA, strideA, fromIndexA, isNativeA);
         final long stubOffsetB = stubOffset(arrayB, offsetB, strideB, fromIndexB, isNativeB);
+        final int stubStride = stubStride(strideA, strideB);
         if (maskB == null) {
-            if (strideA == strideB) {
-                return runRegionEqualsWithStride(location,
-                                stubArrayA, stubOffsetA, 0, isNativeA,
-                                stubArrayB, stubOffsetB, 0, isNativeB, lengthCMP << strideA);
-            }
-            final int swappedStrideA;
-            final int swappedStrideB;
-            final Object swappedArrayA;
-            final Object swappedArrayB;
-            final long swappedOffsetA;
-            final long swappedOffsetB;
-            final boolean swappedIsNativeA;
-            final boolean swappedIsNativeB;
-            if (strideA < strideB) {
-                swappedStrideA = strideB;
-                swappedStrideB = strideA;
-                swappedArrayA = stubArrayB;
-                swappedArrayB = stubArrayA;
-                swappedOffsetA = stubOffsetB;
-                swappedOffsetB = stubOffsetA;
-                swappedIsNativeA = isNativeB;
-                swappedIsNativeB = isNativeA;
-            } else {
-                swappedStrideA = strideA;
-                swappedStrideB = strideB;
-                swappedArrayA = stubArrayA;
-                swappedArrayB = stubArrayB;
-                swappedOffsetA = stubOffsetA;
-                swappedOffsetB = stubOffsetB;
-                swappedIsNativeA = isNativeA;
-                swappedIsNativeB = isNativeB;
-            }
-            if (swappedStrideA == 1) {
-                assert swappedStrideB == 0;
-                return runRegionEqualsWithStride(location,
-                                swappedArrayA, swappedOffsetA, 1, swappedIsNativeA,
-                                swappedArrayB, swappedOffsetB, 0, swappedIsNativeB, lengthCMP);
-            } else {
-                assert swappedStrideA == 2;
-                if (swappedStrideB == 0) {
-                    return runRegionEqualsWithStride(location,
-                                    swappedArrayA, swappedOffsetA, 2, swappedIsNativeA,
-                                    swappedArrayB, swappedOffsetB, 0, swappedIsNativeB, lengthCMP);
-                } else {
-                    assert swappedStrideB == 1;
-                    return runRegionEqualsWithStride(location,
-                                    swappedArrayA, swappedOffsetA, 2, swappedIsNativeA,
-                                    swappedArrayB, swappedOffsetB, 1, swappedIsNativeB, lengthCMP);
-                }
-            }
+            return runRegionEqualsWithStride(location,
+                            stubArrayA, stubOffsetA, isNativeA,
+                            stubArrayB, stubOffsetB, isNativeB, lengthCMP, stubStride);
+
         } else {
             validateRegion(maskB, 0, lengthCMP, strideB, false);
-            if (strideA == strideB) {
-                return runRegionEqualsWithOrMaskWithStride(
-                                location, stubArrayA, stubOffsetA, 0, isNativeA,
-                                stubArrayB, stubOffsetB, 0, isNativeB, maskB, lengthCMP << strideA);
-            }
-            switch (strideA) {
-                case 0:
-                    if (strideB == 1) {
-                        return runRegionEqualsWithOrMaskWithStride(location,
-                                        stubArrayA, stubOffsetA, 0, isNativeA,
-                                        stubArrayB, stubOffsetB, 1, isNativeB, maskB, lengthCMP);
-                    } else {
-                        assert strideB == 2;
-                        return runRegionEqualsWithOrMaskWithStride(location,
-                                        stubArrayA, stubOffsetA, 0, isNativeA,
-                                        stubArrayB, stubOffsetB, 2, isNativeB, maskB, lengthCMP);
-                    }
-                case 1:
-                    if (strideB == 0) {
-                        return runRegionEqualsWithOrMaskWithStride(location,
-                                        stubArrayA, stubOffsetA, 1, isNativeA,
-                                        stubArrayB, stubOffsetB, 0, isNativeB, maskB, lengthCMP);
-                    } else {
-                        assert strideB == 2;
-                        return runRegionEqualsWithOrMaskWithStride(location,
-                                        stubArrayA, stubOffsetA, 1, isNativeA,
-                                        stubArrayB, stubOffsetB, 2, isNativeB, maskB, lengthCMP);
-                    }
-                default:
-                    if (strideB == 0) {
-                        return runRegionEqualsWithOrMaskWithStride(location,
-                                        stubArrayA, stubOffsetA, 2, isNativeA,
-                                        stubArrayB, stubOffsetB, 0, isNativeB, maskB, lengthCMP);
-                    } else {
-                        assert strideB == 1;
-                        return runRegionEqualsWithOrMaskWithStride(location,
-                                        stubArrayA, stubOffsetA, 2, isNativeA,
-                                        stubArrayB, stubOffsetB, 1, isNativeB, maskB, lengthCMP);
-                    }
-            }
+            return runRegionEqualsWithOrMaskWithStride(location,
+                            stubArrayA, stubOffsetA, isNativeA,
+                            stubArrayB, stubOffsetB, isNativeB, maskB, lengthCMP, stubStride);
         }
     }
 
@@ -616,8 +535,8 @@ final class TStringOps {
         return memcmpWithStrideIntl(location, arrayA, a.offset(), strideA, arrayB, b.offset(), strideB, lengthCMP);
     }
 
-    private static int memcmpWithStrideIntl(
-                    Node location, Object arrayA, int offsetA, int strideA,
+    private static int memcmpWithStrideIntl(Node location,
+                    Object arrayA, int offsetA, int strideA,
                     Object arrayB, int offsetB, int strideB, int lengthCMP) {
         if (lengthCMP == 0) {
             return 0;
@@ -630,71 +549,9 @@ final class TStringOps {
         validateRegion(stubArrayB, offsetB, lengthCMP, strideB, isNativeB);
         final long stubOffsetA = stubOffset(arrayA, offsetA, isNativeA);
         final long stubOffsetB = stubOffset(arrayB, offsetB, isNativeB);
-        if (strideA == strideB) {
-            switch (strideA) {
-                case 0:
-                    return runMemCmp(location,
-                                    stubArrayA, stubOffsetA, 0, isNativeA,
-                                    stubArrayB, stubOffsetB, 0, isNativeB, lengthCMP);
-                case 1:
-                    return runMemCmp(location,
-                                    stubArrayA, stubOffsetA, 1, isNativeA,
-                                    stubArrayB, stubOffsetB, 1, isNativeB, lengthCMP);
-                default:
-                    assert strideA == 2;
-                    return runMemCmp(location,
-                                    stubArrayA, stubOffsetA, 2, isNativeA,
-                                    stubArrayB, stubOffsetB, 2, isNativeB, lengthCMP);
-            }
-        }
-        final int swappedStrideA;
-        final int swappedStrideB;
-        final Object swappedArrayA;
-        final Object swappedArrayB;
-        final long swappedOffsetA;
-        final long swappedOffsetB;
-        final boolean swappedIsNativeA;
-        final boolean swappedIsNativeB;
-        final int swappedResult;
-        if (strideA < strideB) {
-            swappedStrideA = strideB;
-            swappedStrideB = strideA;
-            swappedArrayA = stubArrayB;
-            swappedArrayB = stubArrayA;
-            swappedOffsetA = stubOffsetB;
-            swappedOffsetB = stubOffsetA;
-            swappedIsNativeA = isNativeB;
-            swappedIsNativeB = isNativeA;
-            swappedResult = -1;
-        } else {
-            swappedStrideA = strideA;
-            swappedStrideB = strideB;
-            swappedArrayA = stubArrayA;
-            swappedArrayB = stubArrayB;
-            swappedOffsetA = stubOffsetA;
-            swappedOffsetB = stubOffsetB;
-            swappedIsNativeA = isNativeA;
-            swappedIsNativeB = isNativeB;
-            swappedResult = 1;
-        }
-        if (swappedStrideA == 1) {
-            assert swappedStrideB == 0;
-            return swappedResult * runMemCmp(location,
-                            swappedArrayA, swappedOffsetA, 1, swappedIsNativeA,
-                            swappedArrayB, swappedOffsetB, 0, swappedIsNativeB, lengthCMP);
-        } else {
-            assert swappedStrideA == 2;
-            if (swappedStrideB == 0) {
-                return swappedResult * runMemCmp(location,
-                                swappedArrayA, swappedOffsetA, 2, swappedIsNativeA,
-                                swappedArrayB, swappedOffsetB, 0, swappedIsNativeB, lengthCMP);
-            } else {
-                assert swappedStrideB == 1;
-                return swappedResult * runMemCmp(location,
-                                swappedArrayA, swappedOffsetA, 2, swappedIsNativeA,
-                                swappedArrayB, swappedOffsetB, 1, swappedIsNativeB, lengthCMP);
-            }
-        }
+        return runMemCmp(location,
+                        stubArrayA, stubOffsetA, isNativeA,
+                        stubArrayB, stubOffsetB, isNativeB, lengthCMP, stubStride(strideA, strideB));
     }
 
     static int memcmpBytesWithStride(Node location, AbstractTruffleString a, Object arrayA, int strideA, AbstractTruffleString b, Object arrayB, int strideB, int lengthCMP) {
@@ -721,8 +578,8 @@ final class TStringOps {
             switch (strideA) {
                 case 0:
                     return runMemCmp(location,
-                                    stubArrayA, stubOffsetA, 0, isNativeA,
-                                    stubArrayB, stubOffsetB, 0, isNativeB, lengthCMP);
+                                    stubArrayA, stubOffsetA, isNativeA,
+                                    stubArrayB, stubOffsetB, isNativeB, lengthCMP, 0);
                 case 1:
                     return runMemCmpBytes(location,
                                     stubArrayA, stubOffsetA, 1, isNativeA,
@@ -812,9 +669,10 @@ final class TStringOps {
         validateRegion(arrayB, offsetB, lengthCPY, strideB);
         int stubOffsetA = Unsafe.ARRAY_CHAR_BASE_OFFSET + offsetA;
         int stubOffsetB = Unsafe.ARRAY_BYTE_BASE_OFFSET + offsetB;
-        return arraycopyWithStrideIntl(location,
-                        arrayA, stubOffsetA, 1, false,
-                        arrayB, stubOffsetB, strideB, false, lengthCPY);
+        runArrayCopy(location,
+                        arrayA, stubOffsetA, false,
+                        arrayB, stubOffsetB, false, lengthCPY, stubStride(1, strideB));
+        return arrayB;
     }
 
     // arrayB is returned for testing purposes, do not remove
@@ -825,9 +683,10 @@ final class TStringOps {
         validateRegion(arrayB, offsetB, lengthCPY, strideB);
         int stubOffsetA = Unsafe.ARRAY_INT_BASE_OFFSET + offsetA;
         int stubOffsetB = Unsafe.ARRAY_BYTE_BASE_OFFSET + offsetB;
-        return arraycopyWithStrideIntl(location,
-                        arrayA, stubOffsetA, 2, false,
-                        arrayB, stubOffsetB, strideB, false, lengthCPY);
+        runArrayCopy(location,
+                        arrayA, stubOffsetA, false,
+                        arrayB, stubOffsetB, false, lengthCPY, stubStride(2, strideB));
+        return arrayB;
     }
 
     // arrayB is returned for testing purposes, do not remove
@@ -842,58 +701,9 @@ final class TStringOps {
         validateRegion(stubArrayB, offsetB, lengthCPY, strideB, isNativeB);
         final long stubOffsetA = stubOffset(arrayA, offsetA, strideA, fromIndexA, isNativeA);
         final long stubOffsetB = stubOffset(arrayB, offsetB, strideB, fromIndexB, isNativeB);
-        return arraycopyWithStrideIntl(location,
-                        stubArrayA, stubOffsetA, strideA, isNativeA,
-                        stubArrayB, stubOffsetB, strideB, isNativeB, lengthCPY);
-    }
-
-    private static Object arraycopyWithStrideIntl(Node location,
-                    Object stubArrayA, long stubOffsetA, int strideA, boolean isNativeA,
-                    Object stubArrayB, long stubOffsetB, int strideB, boolean isNativeB, int lengthCPY) {
-        if (strideA == strideB) {
-            int byteLength = lengthCPY << strideA;
-            runArrayCopy(
-                            location, stubArrayA, stubOffsetA, 0, isNativeA,
-                            stubArrayB, stubOffsetB, 0, isNativeB, byteLength);
-            return stubArrayB;
-        }
-        switch (strideA) {
-            case 0:
-                if (strideB == 1) {
-                    runArrayCopy(location,
-                                    stubArrayA, stubOffsetA, 0, isNativeA,
-                                    stubArrayB, stubOffsetB, 1, isNativeB, lengthCPY);
-                } else {
-                    assert strideB == 2;
-                    runArrayCopy(location,
-                                    stubArrayA, stubOffsetA, 0, isNativeA,
-                                    stubArrayB, stubOffsetB, 2, isNativeB, lengthCPY);
-                }
-                break;
-            case 1:
-                if (strideB == 0) {
-                    runArrayCopy(location,
-                                    stubArrayA, stubOffsetA, 1, isNativeA,
-                                    stubArrayB, stubOffsetB, 0, isNativeB, lengthCPY);
-                } else {
-                    assert strideB == 2;
-                    runArrayCopy(location,
-                                    stubArrayA, stubOffsetA, 1, isNativeA,
-                                    stubArrayB, stubOffsetB, 2, isNativeB, lengthCPY);
-                }
-                break;
-            default:
-                if (strideB == 0) {
-                    runArrayCopy(location,
-                                    stubArrayA, stubOffsetA, 2, isNativeA,
-                                    stubArrayB, stubOffsetB, 0, isNativeB, lengthCPY);
-                } else {
-                    assert strideB == 1;
-                    runArrayCopy(location,
-                                    stubArrayA, stubOffsetA, 2, isNativeA,
-                                    stubArrayB, stubOffsetB, 1, isNativeB, lengthCPY);
-                }
-        }
+        runArrayCopy(location,
+                        stubArrayA, stubOffsetA, isNativeA,
+                        stubArrayB, stubOffsetB, isNativeB, lengthCPY, stubStride(strideA, strideB));
         return stubArrayB;
     }
 
@@ -919,7 +729,7 @@ final class TStringOps {
         return runCalcStringAttributesBMP(location, stubArray, stubOffset, length, isNative);
     }
 
-    static long calcStringAttributesUTF8(Node location, Object array, int offset, int length, boolean assumeValid, boolean isAtEnd) {
+    static long calcStringAttributesUTF8(Node location, Object array, int offset, int length, boolean assumeValid, boolean isAtEnd, ConditionProfile brokenProfile) {
         final boolean isNative = isNativePointer(array);
         final Object stubArray = stubArray(array, isNative);
         validateRegion(stubArray, offset, length, 0, isNative);
@@ -928,9 +738,9 @@ final class TStringOps {
             return runCalcStringAttributesUTF8(location, stubArray, stubOffset, length, isNative, true);
         } else {
             long attrs = runCalcStringAttributesUTF8(location, stubArray, stubOffset, length, isNative, false);
-            if (TStringGuards.isBrokenMultiByte(StringAttributes.getCodeRange(attrs))) {
+            if (brokenProfile.profile(TStringGuards.isBrokenMultiByte(StringAttributes.getCodeRange(attrs)))) {
                 int codePointLength = 0;
-                for (int i = 0; i < length; i += Encodings.utf8GetCodePointLength(array, offset, length, i)) {
+                for (int i = 0; i < length; i += Encodings.utf8GetCodePointLength(array, offset, length, i, TruffleString.ErrorHandling.BEST_EFFORT)) {
                     codePointLength++;
                     TStringConstants.truffleSafePointPoll(location, codePointLength);
                 }
@@ -1212,8 +1022,10 @@ final class TStringOps {
      * Intrinsic candidate.
      */
     private static boolean runRegionEqualsWithStride(Node location,
-                    Object arrayA, long offsetA, int strideA, boolean isNativeA,
-                    Object arrayB, long offsetB, int strideB, boolean isNativeB, int length) {
+                    Object arrayA, long offsetA, boolean isNativeA,
+                    Object arrayB, long offsetB, boolean isNativeB, int length, int stubStride) {
+        int strideA = stubStrideToStrideA(stubStride);
+        int strideB = stubStrideToStrideB(stubStride);
         for (int i = 0; i < length; i++) {
             if (readValue(arrayA, offsetA, strideA, i, isNativeA) != readValue(arrayB, offsetB, strideB, i, isNativeB)) {
                 return false;
@@ -1227,8 +1039,10 @@ final class TStringOps {
      * Intrinsic candidate.
      */
     private static boolean runRegionEqualsWithOrMaskWithStride(Node location,
-                    Object arrayA, long offsetA, int strideA, boolean isNativeA,
-                    Object arrayB, long offsetB, int strideB, boolean isNativeB, byte[] arrayMask, int lengthCMP) {
+                    Object arrayA, long offsetA, boolean isNativeA,
+                    Object arrayB, long offsetB, boolean isNativeB, byte[] arrayMask, int lengthCMP, int stubStride) {
+        int strideA = stubStrideToStrideA(stubStride);
+        int strideB = stubStrideToStrideB(stubStride);
         for (int i = 0; i < lengthCMP; i++) {
             if ((readValue(arrayA, offsetA, strideA, i, isNativeA) | readFromByteArray(arrayMask, strideB, i)) != readValue(arrayB, offsetB, strideB, i, isNativeB)) {
                 return false;
@@ -1242,8 +1056,10 @@ final class TStringOps {
      * Intrinsic candidate.
      */
     private static int runMemCmp(Node location,
-                    Object arrayA, long offsetA, int strideA, boolean isNativeA,
-                    Object arrayB, long offsetB, int strideB, boolean isNativeB, int lengthCMP) {
+                    Object arrayA, long offsetA, boolean isNativeA,
+                    Object arrayB, long offsetB, boolean isNativeB, int lengthCMP, int stubStride) {
+        int strideA = stubStrideToStrideA(stubStride);
+        int strideB = stubStrideToStrideB(stubStride);
         for (int i = 0; i < lengthCMP; i++) {
             int cmp = readValue(arrayA, offsetA, strideA, i, isNativeA) - readValue(arrayB, offsetB, strideB, i, isNativeB);
             if (cmp != 0) {
@@ -1294,10 +1110,12 @@ final class TStringOps {
      * Intrinsic candidate.
      */
     private static void runArrayCopy(Node location,
-                    Object arrayA, long offsetA, int strideA, boolean isNativeA,
-                    Object arrayB, long offsetB, int strideB, boolean isNativeB, int lengthCPY) {
+                    Object stubArrayA, long stubOffsetA, boolean isNativeA,
+                    Object stubArrayB, long stubOffsetB, boolean isNativeB, int lengthCPY, int stubStride) {
+        int strideA = stubStrideToStrideA(stubStride);
+        int strideB = stubStrideToStrideB(stubStride);
         for (int i = 0; i < lengthCPY; i++) {
-            writeValue(arrayB, offsetB, strideB, i, isNativeB, readValue(arrayA, offsetA, strideA, i, isNativeA));
+            writeValue(stubArrayB, stubOffsetB, strideB, i, isNativeB, readValue(stubArrayA, stubOffsetA, strideA, i, isNativeA));
             TStringConstants.truffleSafePointPoll(location, i + 1);
         }
     }
@@ -1572,32 +1390,51 @@ final class TStringOps {
         return stubOffset(arrayA, offsetA, isNativeA) + (fromIndexA << strideA);
     }
 
+    private static int stubStride(int strideA, int strideB) {
+        assert Stride.isStride(strideA);
+        assert Stride.isStride(strideB);
+        return (strideA * 3) + strideB;
+    }
+
+    private static int stubStrideToStrideA(int stubStride) {
+        assert 0 <= stubStride && stubStride < 9 : stubStride;
+        return stubStride / 3;
+    }
+
+    private static int stubStrideToStrideB(int stubStride) {
+        assert 0 <= stubStride && stubStride < 9 : stubStride;
+        return stubStride % 3;
+    }
+
     private static int uInt(byte value) {
         return Byte.toUnsignedInt(value);
     }
 
-    private static void validateRegion(byte[] array, int offset, int length, int stride) {
-        validateRegion(array, offset, length, stride, false);
-    }
-
-    private static void validateRegion(Object stubArray, int offset, int length, int stride, boolean isNative) {
-        if (invalidOffsetOrLength(stubArray, offset, length, stride, isNative)) {
+    static void validateRegion(byte[] array, int offset, int length, int stride) {
+        if ((Integer.toUnsignedLong(offset) + (Integer.toUnsignedLong(length) << stride)) > array.length) {
             CompilerDirectives.transferToInterpreterAndInvalidate();
             throw CompilerDirectives.shouldNotReachHere();
         }
     }
 
     private static void validateRegion(char[] array, int offset, int length) {
-        long charOffset = offset >> 1;
-        if (length < 0 || charOffset < 0 || charOffset + length > array.length) {
+        int charOffset = offset >> 1;
+        if ((Integer.toUnsignedLong(charOffset) + (Integer.toUnsignedLong(length))) > array.length) {
             CompilerDirectives.transferToInterpreterAndInvalidate();
             throw CompilerDirectives.shouldNotReachHere();
         }
     }
 
     private static void validateRegion(int[] array, int offset, int length) {
-        long intOffset = offset >> 2;
-        if (length < 0 || intOffset < 0 || intOffset + length > array.length) {
+        int intOffset = offset >> 2;
+        if ((Integer.toUnsignedLong(intOffset) + (Integer.toUnsignedLong(length))) > array.length) {
+            CompilerDirectives.transferToInterpreterAndInvalidate();
+            throw CompilerDirectives.shouldNotReachHere();
+        }
+    }
+
+    private static void validateRegion(Object stubArray, int offset, int length, int stride, boolean isNative) {
+        if (invalidOffsetOrLength(stubArray, offset, length, stride, isNative)) {
             CompilerDirectives.transferToInterpreterAndInvalidate();
             throw CompilerDirectives.shouldNotReachHere();
         }
@@ -1614,11 +1451,11 @@ final class TStringOps {
         if (isNative) {
             return stubArray != null || offset < 0 || length < 0;
         } else {
-            return offset < 0 || length < 0 || offset + ((long) length << stride) > ((byte[]) stubArray).length;
+            return (Integer.toUnsignedLong(offset) + (Integer.toUnsignedLong(length) << stride)) > ((byte[]) stubArray).length;
         }
     }
 
     private static boolean invalidIndex(int length, int i) {
-        return i < 0 || i >= length;
+        return Integer.compareUnsigned(i, length) >= 0;
     }
 }

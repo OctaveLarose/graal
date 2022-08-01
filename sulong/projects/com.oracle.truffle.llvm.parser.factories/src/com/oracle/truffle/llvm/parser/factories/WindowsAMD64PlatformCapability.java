@@ -35,13 +35,14 @@ import com.oracle.truffle.llvm.runtime.memory.LLVMSyscallOperationNode;
 import com.oracle.truffle.llvm.runtime.nodes.asm.syscall.LLVMUnsupportedSyscallNode;
 import com.oracle.truffle.llvm.runtime.nodes.intrinsics.llvm.va.LLVMVAListNode;
 import com.oracle.truffle.llvm.runtime.nodes.intrinsics.llvm.va.LLVMVaListStorage.VAListPointerWrapperFactory;
+import com.oracle.truffle.llvm.runtime.nodes.intrinsics.llvm.x86_win.LLVMX86_64_WinVaListStorage;
 import com.oracle.truffle.llvm.runtime.nodes.intrinsics.llvm.x86_win.LLVMX86_64_WinVaListStorageFactory;
 import com.oracle.truffle.llvm.runtime.pointer.LLVMMaybeVaPointer;
 import com.oracle.truffle.llvm.runtime.pointer.LLVMPointer;
 import com.oracle.truffle.llvm.runtime.types.PointerType;
 import com.oracle.truffle.llvm.runtime.types.Type;
 
-final class WindowsAMD64PlatformCapability extends BasicPlatformCapability<WindowsAMD64PlatformCapability.UnknownSyscalls> {
+final class WindowsAMD64PlatformCapability extends BasicAMD64PlatformCapability<WindowsAMD64PlatformCapability.UnknownSyscalls> {
 
     /**
      * We don't know anything about this platform.
@@ -69,13 +70,18 @@ final class WindowsAMD64PlatformCapability extends BasicPlatformCapability<Windo
     }
 
     @Override
-    public Object createVAListStorage(LLVMVAListNode allocaNode, LLVMPointer vaListStackPtr) {
-        return new LLVMMaybeVaPointer(allocaNode, vaListStackPtr);
+    public Object createVAListStorage(LLVMVAListNode allocaNode, LLVMPointer vaListStackPtr, Type vaListType) {
+        return LLVMMaybeVaPointer.createWithAlloca(vaListStackPtr, allocaNode);
     }
 
     @Override
-    public Type getVAListType() {
-        return PointerType.I8;
+    public Object createActualVAListStorage() {
+        return new LLVMX86_64_WinVaListStorage();
+    }
+
+    @Override
+    public Type getGlobalVAListType(Type type) {
+        return PointerType.I8.equals(type) ? PointerType.I8 : null;
     }
 
     @Override

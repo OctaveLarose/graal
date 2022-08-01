@@ -7,9 +7,7 @@ permalink: /tools/visualvm/
 
 # VisualVM
 
-GraalVM comes with the [VisualVM](https://visualvm.github.io) tool which includes heap analysis
-features for the supported guest languages. These languages and features are
-currently available:
+GraalVM provides support for [VisualVM](https://visualvm.github.io), the all-in-one Java (and polyglot) monitoring and troubleshooting tool. VisualVM enables powerful yet easy-to-use Java tooling which includes heap analysis for the supported guest languages. The following languages and features are currently available:
 
  - __Java:__ Heap Summary, Objects View, Threads View, OQL Console
  - __JavaScript:__ Heap Summary, Objects View, Thread View
@@ -18,7 +16,20 @@ currently available:
  - __R:__ Heap Summary, Objects View
 
 ### Starting VisualVM
-To start VisualVM, execute `jvisualvm`. Immediately after startup, the tool shows all locally running Java processes in the Applications area, including the VisualVM process, itself.
+
+VisualVM is shipped as an installable component and can be added to GraalVM using [GraalVM Updater](../reference-manual/graalvm-updater.md):
+
+```shell
+gu install visualvm
+```
+
+This installs VisualVM in the `$GRAALVM_HOME/bin` directory.
+To start VisualVM, execute `jvisualvm`:
+
+```shell
+$GRAALVM_HOME/bin/jvisualvm
+```
+Immediately after startup, the tool shows all locally running Java processes in the Applications area, including the VisualVM process, itself.
 
 ### Capture a Heap Dump
 To capture a heap dump of, for example, a Ruby application for later analysis, start your application and let it run for a few seconds to warm up.
@@ -31,7 +42,7 @@ This way your application will handle signals and capture a heap dump when it re
 The guest language REPL process must be started also with the `--jvm` flag to monitor it using VisualVM.
 This functionality is available with [GraalVM Enterprise Edition](https://www.oracle.com/downloads/graalvm-downloads.html).
 It is not available in GraalVM Community Edition.
-See the [Generating Native Heap Dumps](../reference-manual/native-image/NativeImageHeapdumpEnterprise.md) page for details on capturing heap dumps from a native image process.
+See the [Generating Native Heap Dumps](../reference-manual/native-image/guides/create-heap-dump-from-native-executable.md) page for details on capturing heap dumps from a native image process.
 
 ### Analyzing Objects
 Initially the Summary view for the Java heap is displayed.

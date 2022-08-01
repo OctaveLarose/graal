@@ -323,6 +323,10 @@ public final class Symbol<T> extends ByteSequence {
         // CallSite
         public static final Symbol<Name> target = StaticSymbols.putName("target");
 
+        // java.lang.Enum
+        public static final Symbol<Name> $VALUES = StaticSymbols.putName("$VALUES");
+        public static final Symbol<Name> ENUM$VALUES = StaticSymbols.putName("ENUM$VALUES");
+
         // LambdaForm
         public static final Symbol<Name> compileToBytecode = StaticSymbols.putName("compileToBytecode");
         public static final Symbol<Name> isCompiled = StaticSymbols.putName("isCompiled");
@@ -505,7 +509,10 @@ public final class Symbol<T> extends ByteSequence {
         public static final Symbol<Name> interrupted = StaticSymbols.putName("interrupted");
         public static final Symbol<Name> interrupt = StaticSymbols.putName("interrupt");
         public static final Symbol<Name> HIDDEN_DEPRECATION_SUPPORT = StaticSymbols.putName("0HIDDEN_DEPRECATION_SUPPORT");
+        public static final Symbol<Name> HIDDEN_THREAD_UNPARK_SIGNALS = StaticSymbols.putName("0HIDDEN_THREAD_UNPARK_SIGNALS");
+        public static final Symbol<Name> HIDDEN_THREAD_PARK_LOCK = StaticSymbols.putName("0HIDDEN_THREAD_PARK_LOCK");
         public static final Symbol<Name> HIDDEN_HOST_THREAD = StaticSymbols.putName("0HIDDEN_HOST_THREAD");
+        public static final Symbol<Name> HIDDEN_ESPRESSO_MANAGED = StaticSymbols.putName("0HIDDEN_ESPRESSO_MANAGED");
         public static final Symbol<Name> HIDDEN_INTERRUPTED = StaticSymbols.putName("0HIDDEN_INTERRUPTED");
         public static final Symbol<Name> HIDDEN_THREAD_BLOCKED_OBJECT = StaticSymbols.putName("0HIDDEN_THREAD_BLOCKED_OBJECT");
         public static final Symbol<Name> HIDDEN_THREAD_BLOCKED_COUNT = StaticSymbols.putName("0HIDDEN_THREAD_BLOCKED_COUNT");
@@ -572,6 +579,8 @@ public final class Symbol<T> extends ByteSequence {
 
         public static final Symbol<Type> java_lang_Class = StaticSymbols.putType("Ljava/lang/Class;");
         public static final Symbol<Type> java_lang_Class_array = StaticSymbols.putType("[Ljava/lang/Class;");
+
+        public static final Symbol<Type> java_lang_Enum = StaticSymbols.putType("Ljava/lang/Enum;");
 
         public static final Symbol<Type> java_lang_Throwable = StaticSymbols.putType("Ljava/lang/Throwable;");
         public static final Symbol<Type> java_lang_Exception = StaticSymbols.putType("Ljava/lang/Exception;");

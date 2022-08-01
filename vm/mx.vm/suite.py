@@ -1,7 +1,7 @@
 suite = {
     "name": "vm",
-    "version" : "22.2.0",
-    "mxversion" : "5.317.12",
+    "version" : "22.3.0",
+    "mxversion" : "6.0.1",
     "release" : False,
     "groupId" : "org.graalvm",
 
@@ -39,7 +39,7 @@ suite = {
                 "name": "graal-nodejs",
                 "subdir": True,
                 "dynamic": True,
-                "version": "1ab71b5d03c61fb6e75e7d39d93742c960657763",
+                "version": "a8218ed41a25e7bbf1be8e57e6cbad4ce0f88338",
                 "urls" : [
                     {"url" : "https://github.com/graalvm/graaljs.git", "kind" : "git"},
                     {"url": "https://curio.ssw.jku.at/nexus/content/repositories/snapshots", "kind": "binary"},
@@ -49,7 +49,7 @@ suite = {
                 "name": "graal-js",
                 "subdir": True,
                 "dynamic": True,
-                "version": "1ab71b5d03c61fb6e75e7d39d93742c960657763",
+                "version": "a8218ed41a25e7bbf1be8e57e6cbad4ce0f88338",
                 "urls": [
                     {"url": "https://github.com/graalvm/graaljs.git", "kind" : "git"},
                     {"url": "https://curio.ssw.jku.at/nexus/content/repositories/snapshots", "kind": "binary"},
@@ -57,7 +57,7 @@ suite = {
             },
             {
                 "name": "truffleruby",
-                "version": "23dd067955356c6b574d88b3a2d521d59f76e67f",
+                "version": "78264ffe6c0ed36a04d348d06b1555de19bb57aa",
                 "dynamic": True,
                 "urls": [
                     {"url": "https://github.com/oracle/truffleruby.git", "kind": "git"},
@@ -66,7 +66,7 @@ suite = {
             },
             {
                 "name": "fastr",
-                "version": "e0a630aecf5a2c6485bdddf13fdbdc6fdd8489b6",
+                "version": "dadce43b56675eb247daa6acb53cc5541983f7be",
                 "dynamic": True,
                 "urls": [
                     {"url": "https://github.com/oracle/fastr.git", "kind": "git"},
@@ -75,11 +75,19 @@ suite = {
             },
             {
                 "name": "graalpython",
-                "version": "31f43bc5fa4beb3440c54536f06061fb382f9873",
+                "version": "199bc5c4c2b4880375c6704f56867e18a4be1e83",
                 "dynamic": True,
                 "urls": [
                     {"url": "https://github.com/graalvm/graalpython.git", "kind": "git"},
                     {"url": "https://curio.ssw.jku.at/nexus/content/repositories/snapshots", "kind": "binary"},
+                ]
+            },
+            {
+                "name": "polybenchmarks",
+                "version": "8f87998f2b421f9b269daa00c4bba84adbe8a7a4",
+                "dynamic": True,
+                "urls": [
+                    {"url": "https://github.com/graalvm/polybenchmarks.git", "kind": "git"},
                 ]
             },
         ]
@@ -118,9 +126,11 @@ suite = {
             "checkstyle": "org.graalvm.component.installer",
             "dependencies": [
                 "sdk:LAUNCHER_COMMON",
+                "truffle:VISUALVM-LIB-JFLUID-HEAP",
             ],
             "requires": [
                 "java.logging",
+                "jdk.management",
             ],
         },
         "org.graalvm.polybench.micro" : {
@@ -173,7 +183,20 @@ suite = {
         "WARMUP_BENCHMARKS" : {
             "urls" : ["https://lafo.ssw.uni-linz.ac.at/pub/graal-external-deps/polybench/warmup-benchmarks-0.4.tar.gz"],
             "sha1" : "302f81578d470b0941679ce9b21987c035eee6f6"
-        }
+        },
+        "GRAALPYTHON_PYFLATE_BENCHMARK_RESOURCE" : {
+            # just any reasonably sized .tar.gz or .tar.bz2 for running the benchmark
+            "urls" : ["https://lafo.ssw.uni-linz.ac.at/pub/graal-external-deps/visualvm/visualvm-944-linux-amd64.tar.gz"],
+            "sha1" : "3f276219657688958f919110b12f329a080326c1"
+        },
+        "ORG_NETBEANS_API_ANNOTATIONS_COMMON" : {
+           "sha1" : "ef10fcaff10adfbedcc6058c965397ac47395ecf",
+            "maven" : {
+                "groupId" : "org.netbeans.api",
+                "artifactId" : "org-netbeans-api-annotations-common",
+                "version" : "RELEASE123",
+            },
+        },
     },
 
     "distributions": {
@@ -230,6 +253,7 @@ suite = {
             ],
             "distDependencies": [
                 "sdk:LAUNCHER_COMMON",
+                 "truffle:VISUALVM-LIB-JFLUID-HEAP",
             ],
             "maven" : False,
         },
@@ -288,7 +312,8 @@ suite = {
                 "./warmup/": [
                     # "file:benchmarks/warmup/*.js",
                     # "file:benchmarks/warmup/*.rb",
-                    # "file:benchmarks/warmup/*.py",
+                    "file:benchmarks/warmup/*.py",
+                    "dependency:GRAALPYTHON_PYFLATE_BENCHMARK_RESOURCE",
                     "extracted-dependency:WARMUP_BENCHMARKS/*"
                 ],
                 "./nfi/": [

@@ -121,9 +121,6 @@ class JvmciJdkVm(mx_benchmark.OutputCapturingJavaVm):
         return rules
 
 
-mx_benchmark.add_java_vm(JvmciJdkVm('server', 'default', ['-server', '-XX:-EnableJVMCI', '-XX:-UseJVMCICompiler']), _suite, 2)
-mx_benchmark.add_java_vm(JvmciJdkVm('server', 'hosted', ['-server', '-XX:+EnableJVMCI']), _suite, 3)
-
 def add_or_replace_arg(option_key, value, vm_option_list):
     """
     Determines if an option with the same key as option_key is already present in vm_option_list.
@@ -171,8 +168,11 @@ def build_jvmci_vm_variants(raw_name, raw_config_name, extra_args, variants, inc
             mx_benchmark.add_java_vm(
                 JvmciJdkVm(raw_name, extended_raw_config_name + '-' + var_name, variant_args), suite, var_priority)
 
+
 _graal_variants = [
+    ('no-tiered-comp', ['-XX:-TieredCompilation'], 0),
     ('economy', [], 0, 'economy'),
+    ('economy-no-tiered-comp', ['-XX:-TieredCompilation'], 0, 'economy'),
     ('g1gc', ['-XX:+UseG1GC'], 12),
     ('no-comp-oops', ['-XX:-UseCompressedOops'], 0),
     ('no-splitting', ['-Dpolyglot.engine.Splitting=false'], 0),
@@ -191,6 +191,12 @@ build_jvmci_vm_variants('server', 'graal-core', ['-server', '-XX:+EnableJVMCI', 
 # This behavior is the closest we can get to the -client vm configuration.
 mx_benchmark.add_java_vm(JvmciJdkVm('client', 'default', ['-server', '-XX:-EnableJVMCI', '-XX:-UseJVMCICompiler', '-XX:TieredStopAtLevel=1']), suite=_suite, priority=1)
 mx_benchmark.add_java_vm(JvmciJdkVm('client', 'hosted', ['-server', '-XX:+EnableJVMCI', '-XX:TieredStopAtLevel=1']), suite=_suite, priority=1)
+
+
+mx_benchmark.add_java_vm(JvmciJdkVm('server', 'default', ['-server', '-XX:-EnableJVMCI', '-XX:-UseJVMCICompiler']), _suite, 2)
+mx_benchmark.add_java_vm(JvmciJdkVm('server', 'default-no-tiered-comp', ['-server', '-XX:-EnableJVMCI', '-XX:-UseJVMCICompiler', '-XX:-TieredCompilation']), _suite, 2)
+mx_benchmark.add_java_vm(JvmciJdkVm('server', 'hosted', ['-server', '-XX:+EnableJVMCI']), _suite, 3)
+
 
 class DebugValueBenchmarkMixin(object):
 
@@ -448,20 +454,35 @@ class JMHNativeImageBenchmarkMixin(mx_sdk_benchmark.NativeImageBenchmarkMixin):
 
     def extra_run_arg(self, benchmark, args, image_run_args):
         # JMH does not support forks with native-image. In the distant future we can capture this case.
-        return ['-f0'] + super(JMHNativeImageBenchmarkMixin, self).extra_run_arg(benchmark, args, image_run_args)
+        user_args = super(JMHNativeImageBenchmarkMixin, self).extra_run_arg(benchmark, args, image_run_args)
+        return ['-f0'] + mx_sdk_benchmark.strip_args_with_number(['-f'], user_args)
 
     def extra_agent_run_arg(self, benchmark, args, image_run_args):
         # Don't waste time and energy collecting reflection config.
         user_args = super(JMHNativeImageBenchmarkMixin, self).extra_agent_run_arg(benchmark, args, image_run_args)
-        return ['-f0', '-wi', '1', '-i1'] + mx_sdk_benchmark.strip_args_with_number(['-wi', '-i'], user_args)
+        return ['-f0', '-wi', '1', '-i1'] + mx_sdk_benchmark.strip_args_with_number(['-f', '-wi', '-i'], user_args)
 
     def extra_profile_run_arg(self, benchmark, args, image_run_args):
         # Don't waste time profiling the same code but still wait for compilation on HotSpot.
         user_args = super(JMHNativeImageBenchmarkMixin, self).extra_profile_run_arg(benchmark, args, image_run_args)
-        return ['-f0', '-wi', '1', '-i5'] + mx_sdk_benchmark.strip_args_with_number(['-wi', '-i'], user_args)
+        return ['-f0', '-wi', '1', '-i5'] + mx_sdk_benchmark.strip_args_with_number(['-f', '-wi', '-i'], user_args)
 
     def benchmarkName(self):
         return self.name()
+
+
+class JMHJarBasedNativeImageBenchmarkMixin(JMHNativeImageBenchmarkMixin):
+    """Provides extra command line checking for JAR-based native image JMH suites."""
+
+    def extra_agent_run_arg(self, benchmark, args, image_run_args):
+        jmhOptions = self._extractJMHOptions(args)
+        for index, option in enumerate(jmhOptions):
+            argument = jmhOptions[index+1] if index + 1 < len(jmhOptions) else None
+            if option == '-f' and argument != '0':
+                mx.warn(f"JMH native images don't support -f with non-zero argument {argument}, ignoring it")
+            elif option.startswith('-jvmArgs'):
+                mx.warn(f"JMH native images don't support option {option}, ignoring it")
+        return super(JMHJarBasedNativeImageBenchmarkMixin, self).extra_agent_run_arg(benchmark, args, image_run_args)
 
 
 class JMHRunnerGraalCoreBenchmarkSuite(mx_benchmark.JMHRunnerBenchmarkSuite, JMHNativeImageBenchmarkMixin):
@@ -491,7 +512,7 @@ class JMHRunnerGraalCoreBenchmarkSuite(mx_benchmark.JMHRunnerBenchmarkSuite, JMH
 mx_benchmark.add_bm_suite(JMHRunnerGraalCoreBenchmarkSuite())
 
 
-class JMHJarGraalCoreBenchmarkSuite(mx_benchmark.JMHJarBenchmarkSuite, JMHNativeImageBenchmarkMixin):
+class JMHJarGraalCoreBenchmarkSuite(mx_benchmark.JMHJarBenchmarkSuite, JMHJarBasedNativeImageBenchmarkMixin):
 
     def name(self):
         return "jmh-jar"
@@ -506,7 +527,7 @@ class JMHJarGraalCoreBenchmarkSuite(mx_benchmark.JMHJarBenchmarkSuite, JMHNative
 mx_benchmark.add_bm_suite(JMHJarGraalCoreBenchmarkSuite())
 
 
-class JMHDistGraalCoreBenchmarkSuite(mx_benchmark.JMHDistBenchmarkSuite, JMHNativeImageBenchmarkMixin):
+class JMHDistGraalCoreBenchmarkSuite(mx_benchmark.JMHDistBenchmarkSuite, JMHJarBasedNativeImageBenchmarkMixin):
 
     def name(self):
         return "jmh-dist"
@@ -526,7 +547,7 @@ class JMHDistGraalCoreBenchmarkSuite(mx_benchmark.JMHDistBenchmarkSuite, JMHNati
 mx_benchmark.add_bm_suite(JMHDistGraalCoreBenchmarkSuite())
 
 
-class JMHDistWhiteboxBenchmarkSuite(mx_benchmark.JMHDistBenchmarkSuite, JMHNativeImageBenchmarkMixin):
+class JMHDistWhiteboxBenchmarkSuite(mx_benchmark.JMHDistBenchmarkSuite, JMHJarBasedNativeImageBenchmarkMixin):
 
     def name(self):
         return "jmh-whitebox"

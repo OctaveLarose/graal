@@ -58,9 +58,7 @@ public abstract class LLVMAccessThreadLocalSymbolNode extends LLVMAccessSymbolNo
     public LLVMPointer accessSingleContext(@Cached BranchProfile exception) throws LLVMIllegalSymbolIndexException {
         LLVMPointer pointer = checkNull(getContext().getSymbol(symbol, exception), exception);
         LLVMThreadLocalPointer threadLocalPointer = (LLVMThreadLocalPointer) LLVMManagedPointer.cast(pointer).getObject();
-        long offset = threadLocalPointer.getOffset();
-        LLVMPointer base = LLVMLanguage.get(this).contextThreadLocal.get().getSection(symbol.getBitcodeID(exception));
-        return checkNull(base.increment(offset), exception);
+        return threadLocalPointer.resolve(LLVMLanguage.get(this), exception);
     }
 
     protected LLVMStack.LLVMStackAccessHolder createStackAccessHolder() {
@@ -73,8 +71,6 @@ public abstract class LLVMAccessThreadLocalSymbolNode extends LLVMAccessSymbolNo
                     @Cached BranchProfile exception) throws LLVMIllegalSymbolIndexException {
         LLVMPointer pointer = checkNull(stackAccessHolder.stackAccess.executeGetStack(frame).getContext().getSymbol(symbol, exception), exception);
         LLVMThreadLocalPointer threadLocalPointer = (LLVMThreadLocalPointer) LLVMManagedPointer.cast(pointer).getObject();
-        long offset = threadLocalPointer.getOffset();
-        LLVMPointer base = LLVMLanguage.get(this).contextThreadLocal.get().getSection(symbol.getBitcodeID(exception));
-        return checkNull(base.increment(offset), exception);
+        return threadLocalPointer.resolve(LLVMLanguage.get(this), exception);
     }
 }

@@ -363,7 +363,27 @@ public final class GraalServices {
      * current thread.
      */
     public static long getCurrentThreadAllocatedBytes() {
-        return getThreadAllocatedBytes(currentThread().getId());
+        return getThreadAllocatedBytes(getCurrentThreadId());
+    }
+
+    /**
+     * Gets the identifier of {@code thread}.
+     *
+     * This method abstracts over how the identifier is retrieved in the context of JDK-8284161.
+     */
+    @SuppressWarnings("deprecation" /* JDK-8284161 */)
+    public static long getThreadId(Thread thread) {
+        return thread.getId();
+    }
+
+    /**
+     * Gets the identifier of the current thread.
+     *
+     * This method abstracts over how the identifier is retrieved in the context of JDK-8284161.
+     */
+    @SuppressWarnings("deprecation" /* JDK-8284161 */)
+    public static long getCurrentThreadId() {
+        return getThreadId(currentThread());
     }
 
     /**
@@ -542,5 +562,17 @@ public final class GraalServices {
         } catch (Throwable e) {
             throw new InternalError("Exception when instantiating implicit exception dispatch", e);
         }
+    }
+
+    /**
+     * Notifies that the compiler is at a point where memory usage is expected to be relatively low
+     * (e.g., just before/after a compilation). The garbage collector might be able to make use of
+     * such a hint to optimize its performance.
+     *
+     * @param fullGC controls whether the hinted GC should be a full GC.
+     */
+    public static void notifyLowMemoryPoint(@SuppressWarnings("unused") boolean fullGC) {
+        // Substituted by
+        // com.oracle.svm.hotspot.libgraal.Target_org_graalvm_compiler_serviceprovider_GraalServices
     }
 }

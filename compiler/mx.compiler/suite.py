@@ -1,10 +1,10 @@
 suite = {
-  "mxversion" : "5.317.12",
+  "mxversion" : "6.3.0",
   "name" : "compiler",
   "sourceinprojectwhitelist" : [],
 
   "groupId" : "org.graalvm.compiler",
-  "version" : "22.2.0",
+  "version" : "22.3.0",
   "release" : False,
   "url" : "http://www.graalvm.org/",
   "developer" : {
@@ -569,6 +569,9 @@ suite = {
         "jdk.unsupported", # sun.misc.Unsafe
         "java.management"
       ],
+      "uses" : [
+        "org.graalvm.compiler.hotspot.meta.HotSpotInvocationPluginProvider"
+      ],
       "checkstyle" : "org.graalvm.compiler.graph",
       "annotationProcessors" : [
         "GRAAL_PROCESSOR",
@@ -742,7 +745,6 @@ suite = {
       "requiresConcealed" : {
         "java.instrument" : [
           "sun.instrument",
-          "java.lang.instrument",
         ],
       },
       "annotationProcessors" : [
@@ -989,6 +991,9 @@ suite = {
           "jdk.vm.ci.meta",
         ],
       },
+      "uses" : [
+        "org.graalvm.compiler.lir.LIRInstructionVerifier"
+      ],
       "annotationProcessors" : ["GRAAL_PROCESSOR"],
       "checkstyle" : "org.graalvm.compiler.graph",
       "javaCompliance" : "11+",
@@ -1597,7 +1602,7 @@ suite = {
       "sourceDirs" : ["src"],
       "dependencies" : [
         "org.graalvm.compiler.replacements.amd64",
-        "org.graalvm.compiler.truffle.compiler",
+        "truffle:TRUFFLE_API",
       ],
       "checkstyle" : "org.graalvm.compiler.graph",
       "annotationProcessors" : [
@@ -1676,6 +1681,7 @@ suite = {
       "subDir" : "src",
       "sourceDirs" : ["src"],
       "dependencies" : [
+        "org.graalvm.compiler.hotspot",
         "org.graalvm.compiler.truffle.compiler",
         "org.graalvm.compiler.truffle.compiler.amd64",
         "org.graalvm.compiler.truffle.runtime",
@@ -1849,6 +1855,7 @@ suite = {
       "subDir" : "src",
       "sourceDirs" : ["src"],
       "dependencies" : [
+        "org.graalvm.compiler.truffle.compiler.amd64",
         "org.graalvm.compiler.truffle.compiler.hotspot",
         "org.graalvm.compiler.hotspot.amd64",
       ],
@@ -1980,8 +1987,6 @@ suite = {
     "GRAAL_TRUFFLE_COMPILER_LIBGRAAL": {
       "subDir" : "src",
       "dependencies" : [
-        "org.graalvm.compiler.truffle.compiler.hotspot.amd64",
-        "org.graalvm.compiler.truffle.compiler.hotspot.aarch64",
         "org.graalvm.compiler.truffle.compiler.hotspot.libgraal",
       ],
 
@@ -2034,14 +2039,13 @@ suite = {
           "jdk.unsupported" # sun.misc.Unsafe
         ],
         "exports" : [
-          "* to com.oracle.graal.graal_enterprise,org.graalvm.nativeimage.pointsto,org.graalvm.nativeimage.builder,org.graalvm.nativeimage.llvm,com.oracle.svm.svm_enterprise,org.graalvm.nativeimage.base",
-          "org.graalvm.compiler.core.common            to jdk.internal.vm.compiler.management,org.graalvm.nativeimage.agent.tracing",
+          "* to com.oracle.graal.graal_enterprise,org.graalvm.nativeimage.pointsto,org.graalvm.nativeimage.builder,org.graalvm.nativeimage.llvm,com.oracle.svm.svm_enterprise,com.oracle.svm_enterprise.ml_dataset,org.graalvm.nativeimage.base",
+          "org.graalvm.compiler.core.common            to jdk.internal.vm.compiler.management,org.graalvm.nativeimage.agent.tracing,org.graalvm.nativeimage.objectfile",
           "org.graalvm.compiler.debug                  to jdk.internal.vm.compiler.management,org.graalvm.nativeimage.objectfile",
           "org.graalvm.compiler.hotspot                to jdk.internal.vm.compiler.management",
-          "org.graalvm.compiler.nodes.graphbuilderconf to org.graalvm.nativeimage.driver",
+          "org.graalvm.compiler.nodes.graphbuilderconf to org.graalvm.nativeimage.driver,org.graalvm.nativeimage.librarysupport",
           "org.graalvm.compiler.options                to jdk.internal.vm.compiler.management,org.graalvm.nativeimage.driver,org.graalvm.nativeimage.junitsupport",
           "org.graalvm.compiler.phases.common          to org.graalvm.nativeimage.agent.tracing,org.graalvm.nativeimage.configure",
-          "org.graalvm.compiler.phases.common.jmx      to jdk.internal.vm.compiler.management",
           "org.graalvm.compiler.serviceprovider        to jdk.internal.vm.compiler.management,org.graalvm.nativeimage.driver,org.graalvm.nativeimage.agent.jvmtibase,org.graalvm.nativeimage.agent.diagnostics",
           "org.graalvm.compiler.truffle.jfr            to jdk.internal.vm.compiler.truffle.jfr",
           "org.graalvm.libgraal                        to jdk.internal.vm.compiler.management",
@@ -2058,9 +2062,9 @@ suite = {
           "org.graalvm.compiler.hotspot.HotSpotGraalManagementRegistration",
           "org.graalvm.compiler.hotspot.HotSpotCodeCacheListener",
           "org.graalvm.compiler.hotspot.HotSpotBackendFactory",
+          "org.graalvm.compiler.hotspot.meta.HotSpotInvocationPluginProvider",
           "org.graalvm.compiler.nodes.graphbuilderconf.GeneratedPluginFactory",
           "org.graalvm.compiler.options.OptionDescriptors",
-          "org.graalvm.compiler.phases.common.jmx.HotSpotMBeanOperationProvider",
           "org.graalvm.compiler.serviceprovider.JMXService",
           "org.graalvm.compiler.truffle.compiler.hotspot.TruffleCallBoundaryInstrumentationFactory",
           "org.graalvm.compiler.truffle.compiler.substitutions.GraphBuilderInvocationPluginProvider",

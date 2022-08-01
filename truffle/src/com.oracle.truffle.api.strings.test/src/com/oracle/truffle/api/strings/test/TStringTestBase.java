@@ -56,6 +56,7 @@ import java.nio.Buffer;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.EnumSet;
 
@@ -69,6 +70,7 @@ import com.oracle.truffle.api.interop.InteropLibrary;
 import com.oracle.truffle.api.interop.TruffleObject;
 import com.oracle.truffle.api.library.ExportLibrary;
 import com.oracle.truffle.api.library.ExportMessage;
+import com.oracle.truffle.api.nodes.Node;
 import com.oracle.truffle.api.strings.AbstractTruffleString;
 import com.oracle.truffle.api.strings.MutableTruffleString;
 import com.oracle.truffle.api.strings.TruffleString;
@@ -124,7 +126,12 @@ public class TStringTestBase {
         } catch (NoSuchFieldException e) {
             throw new RuntimeException("exception while trying to get Buffer.address via reflection:", e);
         }
-        byteBufferAddressOffset = UNSAFE.objectFieldOffset(addressField);
+        byteBufferAddressOffset = getObjectFieldOffset(addressField);
+    }
+
+    @SuppressWarnings("deprecation")
+    static long getObjectFieldOffset(Field field) {
+        return UNSAFE.objectFieldOffset(field);
     }
 
     protected static boolean isDebugStrictEncodingChecks() {
@@ -635,7 +642,7 @@ public class TStringTestBase {
 
     protected static void assertBytesEqual(AbstractTruffleString a, TruffleString.Encoding encoding, byte[] array, int fromIndex, int length) {
         byte[] cmp = new byte[length];
-        a.copyToByteArrayNodeUncached(0, cmp, 0, length, encoding);
+        a.copyToByteArrayUncached(0, cmp, 0, length, encoding);
         if (array.length == length) {
             Assert.assertArrayEquals(array, cmp);
         } else {
@@ -683,5 +690,51 @@ public class TStringTestBase {
             return 1;
         }
         return 0;
+    }
+
+    protected static ArrayList<Object[]> crossProductErrorHandling(Iterable<Node> nodes) {
+        ArrayList<Object[]> ret = new ArrayList<>();
+        for (Node n : nodes) {
+            for (TruffleString.ErrorHandling eh : TruffleString.ErrorHandling.values()) {
+                ret.add(new Object[]{n, eh});
+            }
+        }
+        return ret;
+    }
+
+    protected static ArrayList<Object[]> withErrorHandling(Iterable<Object[]> nodes) {
+        ArrayList<Object[]> ret = new ArrayList<>();
+        for (Object[] n : nodes) {
+            for (TruffleString.ErrorHandling eh : TruffleString.ErrorHandling.values()) {
+                Object[] params = Arrays.copyOf(n, n.length + 1);
+                params[n.length] = eh;
+                ret.add(params);
+            }
+        }
+        return ret;
+    }
+
+    protected static boolean isValidCodePoint(int codepoint, TruffleString.Encoding encoding) {
+        if (codepoint < 0) {
+            return false;
+        }
+        if (isUTF(encoding)) {
+            return Character.isValidCodePoint(codepoint) && !(codepoint <= 0xffff && Character.isSurrogate((char) codepoint));
+        }
+        if (encoding == ISO_8859_1) {
+            return codepoint <= 0xff;
+        }
+        if (encoding == US_ASCII) {
+            return codepoint <= 0xff;
+        }
+        return Encodings.isValidCodePoint(codepoint, Encodings.getJCoding(encoding));
+    }
+
+    public static void checkCodepoint(boolean isValid, TruffleString.Encoding encoding, int[] codepoints, int i, int result, TruffleString.ErrorHandling errorHandling) {
+        if (errorHandling == TruffleString.ErrorHandling.RETURN_NEGATIVE && (codepoints.length == 1 && !isValid || !isValidCodePoint(codepoints[i], encoding))) {
+            Assert.assertTrue(result < 0);
+        } else {
+            Assert.assertEquals(codepoints[i], result);
+        }
     }
 }

@@ -28,6 +28,7 @@ package com.oracle.graal.pointsto.api;
 
 import java.lang.reflect.AnnotatedElement;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.List;
 import java.util.Optional;
 import java.util.concurrent.CopyOnWriteArrayList;
@@ -44,7 +45,6 @@ import org.graalvm.compiler.phases.OptimisticOptimizations;
 import org.graalvm.nativeimage.hosted.Feature.DuringAnalysisAccess;
 
 import com.oracle.graal.pointsto.BigBang;
-import com.oracle.graal.pointsto.PointsToAnalysis;
 import com.oracle.graal.pointsto.meta.AnalysisMethod;
 import com.oracle.graal.pointsto.meta.AnalysisType;
 import com.oracle.graal.pointsto.meta.AnalysisUniverse;
@@ -197,7 +197,7 @@ public abstract class HostVM {
      * @param method the newly created method
      * @param graph the method graph
      */
-    public void methodBeforeTypeFlowCreationHook(PointsToAnalysis bb, AnalysisMethod method, StructuredGraph graph) {
+    public void methodBeforeTypeFlowCreationHook(BigBang bb, AnalysisMethod method, StructuredGraph graph) {
     }
 
     /**
@@ -239,4 +239,6 @@ public abstract class HostVM {
     public Object getConfiguration() {
         return null;
     }
+
+    public abstract Comparator<? super ResolvedJavaType> getTypeComparator();
 }

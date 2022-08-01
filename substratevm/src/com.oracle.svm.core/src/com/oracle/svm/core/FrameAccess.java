@@ -51,11 +51,13 @@ public abstract class FrameAccess {
     @Uninterruptible(reason = "Called from uninterruptible code.", mayBeInlined = true)
     public abstract void writeReturnAddress(Pointer sourceSp, CodePointer newReturnAddress);
 
+    @Uninterruptible(reason = "Called from uninterruptible code.", mayBeInlined = true)
+    public abstract Pointer getReturnAddressLocation(Pointer sourceSp);
+
     @Fold
     public static int returnAddressSize() {
         Architecture arch = ConfigurationValues.getTarget().arch;
         if (arch instanceof AArch64) {
-            /* Currently AArch64.getReturnAddressSize() is incorrectly 0. */
             return wordSize();
         } else {
             return arch.getReturnAddressSize();

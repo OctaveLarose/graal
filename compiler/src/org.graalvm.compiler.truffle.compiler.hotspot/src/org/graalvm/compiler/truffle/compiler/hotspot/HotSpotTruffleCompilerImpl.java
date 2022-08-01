@@ -90,6 +90,7 @@ import org.graalvm.compiler.truffle.compiler.TruffleCompilationIdentifier;
 import org.graalvm.compiler.truffle.compiler.TruffleCompilerConfiguration;
 import org.graalvm.compiler.truffle.compiler.TruffleCompilerImpl;
 import org.graalvm.compiler.truffle.compiler.TruffleTierConfiguration;
+import org.graalvm.compiler.truffle.options.PolyglotCompilerOptions;
 
 import jdk.vm.ci.code.BailoutException;
 import jdk.vm.ci.code.CodeCacheProvider;
@@ -126,8 +127,9 @@ public final class HotSpotTruffleCompilerImpl extends TruffleCompilerImpl implem
         HotSpotBackend backend = hotspotGraalRuntime.getHostBackend();
         GraphBuilderPhase phase = (GraphBuilderPhase) backend.getSuites().getDefaultGraphBuilderSuite().findPhase(GraphBuilderPhase.class).previous();
         Plugins plugins = phase.getGraphBuilderConfig().getPlugins();
+        HotSpotKnownTruffleTypes knownTruffleTypes = new HotSpotKnownTruffleTypes(backend.getProviders().getMetaAccess());
         final PartialEvaluatorConfiguration lastTierPe = createPartialEvaluatorConfiguration(hotspotGraalRuntime.getCompilerConfigurationName());
-        final TruffleTierConfiguration lastTierSetup = new TruffleTierConfiguration(lastTierPe, backend, options);
+        final TruffleTierConfiguration lastTierSetup = new TruffleTierConfiguration(lastTierPe, backend, options, knownTruffleTypes);
 
         CompilerConfigurationFactory lowTierCompilerConfigurationFactory = new EconomyCompilerConfigurationFactory();
         CompilerConfiguration compilerConfiguration = lowTierCompilerConfigurationFactory.createCompilerConfiguration();
@@ -138,8 +140,8 @@ public final class HotSpotTruffleCompilerImpl extends TruffleCompilerImpl implem
         Providers firstTierProviders = firstTierBackend.getProviders();
         PartialEvaluatorConfiguration firstTierPe = new EconomyPartialEvaluatorConfiguration();
         firstTierBackend.completeInitialization(HotSpotJVMCIRuntime.runtime(), options);
-        TruffleTierConfiguration firstTierSetup = new TruffleTierConfiguration(firstTierPe, firstTierBackend, firstTierProviders, firstTierSuites, firstTierLirSuites);
-        final TruffleCompilerConfiguration compilerConfig = new TruffleCompilerConfiguration(runtime, plugins, snippetReflection, firstTierSetup, lastTierSetup);
+        TruffleTierConfiguration firstTierSetup = new TruffleTierConfiguration(firstTierPe, firstTierBackend, firstTierProviders, firstTierSuites, firstTierLirSuites, knownTruffleTypes);
+        final TruffleCompilerConfiguration compilerConfig = new TruffleCompilerConfiguration(runtime, plugins, snippetReflection, firstTierSetup, lastTierSetup, knownTruffleTypes);
 
         return new HotSpotTruffleCompilerImpl(hotspotGraalRuntime, compilerConfig);
     }
@@ -199,7 +201,7 @@ public final class HotSpotTruffleCompilerImpl extends TruffleCompilerImpl implem
 
     @Override
     protected HotSpotPartialEvaluator createPartialEvaluator(TruffleCompilerConfiguration configuration) {
-        return new HotSpotPartialEvaluator(configuration, builderConfig);
+        return new HotSpotPartialEvaluator(configuration, builderConfig, configuration.getKnownTruffleTypes());
     }
 
     @Override
@@ -283,7 +285,7 @@ public final class HotSpotTruffleCompilerImpl extends TruffleCompilerImpl implem
                     InvocationPlugins plugins) {
         TruffleTierConfiguration tier = config.lastTier();
         Suites newSuites = tier.suites().copy();
-        removeInliningPhase(newSuites);
+        removeInliningPhases(newSuites);
 
         StructuredGraph graph = new StructuredGraph.Builder(debug.getOptions(), debug, AllowAssumptions.NO)//
                         .profileProvider(null)//
@@ -330,10 +332,11 @@ public final class HotSpotTruffleCompilerImpl extends TruffleCompilerImpl implem
         return graphBuilderSuite;
     }
 
-    private static void removeInliningPhase(Suites suites) {
+    private static void removeInliningPhases(Suites suites) {
         ListIterator<BasePhase<? super HighTierContext>> inliningPhase = suites.getHighTier().findPhase(AbstractInliningPhase.class);
-        if (inliningPhase != null) {
+        while (inliningPhase != null) {
             inliningPhase.remove();
+            inliningPhase = suites.getHighTier().findPhase(AbstractInliningPhase.class);
         }
     }
 
@@ -402,54 +405,57 @@ public final class HotSpotTruffleCompilerImpl extends TruffleCompilerImpl implem
     }
 
     @Override
-    public void purgeCaches() {
+    public void purgePartialEvaluationCaches() {
         getPartialEvaluator().purgeEncodedGraphCache();
     }
 
     @SuppressWarnings("try")
     @Override
-    protected void handleBailout(DebugContext debug, StructuredGraph graph, BailoutException bailout) {
+    protected void handleBailout(DebugContext debug, StructuredGraph graph, BailoutException bailout, org.graalvm.options.OptionValues options) {
         /*
          * Catch non-permanent bailouts due to "failed dependencies" aka "invalid assumptions"
          * during code installation. Since there's no specific exception for such cases, it's
          * assumed that non-permanent, non-cancellation bailouts are due to "invalid dependencies"
          * during code installation.
          */
-        if (!getPartialEvaluator().isEncodedGraphCacheEnabled()) {
+        boolean persistentEncodedGraphCache = options.get(PolyglotCompilerOptions.EncodedGraphCache);
+        if (!persistentEncodedGraphCache || bailout instanceof CancellationBailoutException || bailout.isPermanent()) {
             return;
         }
-        if (!(bailout instanceof CancellationBailoutException)) {
-            // Evict only the methods that could have caused the invalidation e.g. methods with
-            // assumptions.
-            if (!bailout.isPermanent() && graph != null && !graph.getAssumptions().isEmpty()) {
-                try (DebugCloseable dummy = EncodedGraphCacheEvictionTime.start(debug)) {
-                    assert graph.method() != null;
-                    EconomicMap<ResolvedJavaMethod, EncodedGraph> graphCache = partialEvaluator.getOrCreateEncodedGraphCache();
+        // Evict only the methods that could have caused the invalidation e.g. methods with
+        // assumptions.
+        if (graph == null || graph.getAssumptions() == null || graph.getAssumptions().isEmpty()) {
+            return;
+        }
+        try (DebugContext.Scope scope = debug.scope("EncodedGraphCache");
+                        DebugCloseable time = EncodedGraphCacheEvictionTime.start(debug)) {
+            EncodedGraphCacheBailouts.increment(debug);
+            assert graph.method() != null;
+            EconomicMap<ResolvedJavaMethod, EncodedGraph> graphCache = partialEvaluator.getOrCreateEncodedGraphCache(persistentEncodedGraphCache);
+            /*
+             * At this point, the cache containing invalid graphs may be already purged/dropped, but
+             * there's no way to know in which cache the invalid method is/was present, so all
+             * encoded graphs, including the root and all inlined methods must be evicted. These
+             * bailouts (invalid dependencies) are very rare, the over-evicting impact is
+             * negligible.
+             */
+            if (!graphCache.isEmpty()) {
+                debug.log(DebugContext.VERBOSE_LEVEL, "Evict root %s", graph.method());
+                EncodedGraphCacheRemovedEntries.increment(debug);
+                graphCache.removeKey(graph.method());
 
-                    /*
-                     * At this point, the cache containing invalid graphs may be already
-                     * purged/dropped, but there's no way to know in which cache the invalid method
-                     * is/was present, so all encoded graphs, including the root and all inlined
-                     * methods must be evicted. These bailouts (invalid dependencies) are very rare,
-                     * the over-evicting impact is negligible.
-                     */
-                    if (!graphCache.isEmpty()) {
-                        debug.log(DebugContext.VERBOSE_LEVEL, "Evict root %s", graph.method());
-                        graphCache.removeKey(graph.method());
+                // Bailout may have been caused by an assumption on some inlined method.
+                for (ResolvedJavaMethod method : graph.getMethods()) {
+                    EncodedGraph encodedGraph = graphCache.get(method);
+                    if (encodedGraph == null) {
+                        continue;
+                    }
 
-                        // Bailout may have been caused by an assumption on some inlined method.
-                        for (ResolvedJavaMethod method : graph.getMethods()) {
-                            EncodedGraph encodedGraph = graphCache.get(method);
-                            if (encodedGraph == null) {
-                                continue;
-                            }
-
-                            Assumptions assumptions = encodedGraph.getAssumptions();
-                            if (assumptions != null && !assumptions.isEmpty()) {
-                                debug.log(DebugContext.VERBOSE_LEVEL, "\tEvict inlined %s", method);
-                                graphCache.removeKey(method);
-                            }
-                        }
+                    Assumptions assumptions = encodedGraph.getAssumptions();
+                    if (assumptions != null && !assumptions.isEmpty()) {
+                        debug.log(DebugContext.VERBOSE_LEVEL, "\tEvict inlined %s", method);
+                        EncodedGraphCacheRemovedEntries.increment(debug);
+                        graphCache.removeKey(method);
                     }
                 }
             }

@@ -35,15 +35,18 @@ import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 
+import org.graalvm.compiler.serviceprovider.JavaVersionUtil;
 import org.graalvm.nativeimage.IsolateThread;
 
 import com.oracle.svm.core.annotate.Alias;
 import com.oracle.svm.core.annotate.TargetClass;
 import com.oracle.svm.core.jdk.ContinuationsSupported;
+import com.oracle.svm.core.jdk.JDK17OrEarlier;
 import com.oracle.svm.core.jdk.NotLoomJDK;
 import com.oracle.svm.core.monitor.MonitorSupport;
 import com.oracle.svm.core.stack.JavaFrameAnchor;
 import com.oracle.svm.core.stack.JavaFrameAnchors;
+import com.oracle.svm.core.util.VMError;
 
 import jdk.internal.misc.Unsafe;
 
@@ -108,7 +111,7 @@ final class SubstrateVirtualThread extends Thread {
             if (parent instanceof SubstrateVirtualThread) {
                 this.scheduler = ((SubstrateVirtualThread) parent).scheduler;
             } else {
-                this.scheduler = SubstrateVirtualThreads.SCHEDULER;
+                this.scheduler = ((SubstrateVirtualThreads) VirtualThreads.singleton()).scheduler;
             }
         } else {
             this.scheduler = scheduler;
@@ -197,7 +200,7 @@ final class SubstrateVirtualThread extends Thread {
             return false;
         }
         JavaFrameAnchor anchor = JavaFrameAnchors.getFrameAnchor();
-        if (anchor.isNonNull() && cont.getBottomSP().aboveThan(anchor.getLastJavaSP())) {
+        if (anchor.isNonNull() && cont.getBaseSP().aboveThan(anchor.getLastJavaSP())) {
             return false;
         }
 
@@ -430,6 +433,9 @@ final class SubstrateVirtualThread extends Thread {
     }
 
     private Object interruptLock() {
+        if (JavaVersionUtil.JAVA_SPEC >= 19) {
+            throw VMError.unsupportedFeature("Loom is not yet supported on JDK 19");
+        }
         return JavaThreads.toTarget(this).blockerLock;
     }
 
@@ -465,6 +471,9 @@ final class SubstrateVirtualThread extends Thread {
 
     @Override
     public void interrupt() {
+        if (JavaVersionUtil.JAVA_SPEC >= 19) {
+            throw VMError.unsupportedFeature("Loom is not yet supported on JDK 19");
+        }
         if (Thread.currentThread() != this) {
             Object token = switchToCarrierAndAcquireInterruptLock();
             try {
@@ -569,7 +578,7 @@ final class SubstrateVirtualThread extends Thread {
     @Override
     public String toString() {
         StringBuilder sb = new StringBuilder("VirtualThread[#");
-        sb.append(getId());
+        sb.append(JavaThreads.getThreadId(this));
         String name = getName();
         if (!name.isEmpty() && !name.equals("<unnamed>")) {
             sb.append(",");
@@ -602,7 +611,7 @@ final class SubstrateVirtualThread extends Thread {
 
     @Override
     public int hashCode() {
-        return (int) getId();
+        return (int) JavaThreads.getThreadId(this);
     }
 
     @Override
@@ -691,7 +700,7 @@ final class SubstrateVirtualThread extends Thread {
     }
 }
 
-@TargetClass(className = "jdk.internal.misc.InnocuousThread", onlyWith = {ContinuationsSupported.class, NotLoomJDK.class})
+@TargetClass(className = "jdk.internal.misc.InnocuousThread", onlyWith = {ContinuationsSupported.class, NotLoomJDK.class, JDK17OrEarlier.class})
 final class Target_jdk_internal_misc_InnocuousThread {
     @Alias
     static native Thread newThread(String name, Runnable target);

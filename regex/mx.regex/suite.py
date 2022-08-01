@@ -39,11 +39,11 @@
 # SOFTWARE.
 #
 suite = {
-  "mxversion" : "5.292.5",
+  "mxversion" : "6.4.0",
 
   "name" : "regex",
 
-  "version" : "22.2.0",
+  "version" : "22.3.0",
   "release" : False,
   "groupId" : "org.graalvm.regex",
   "url" : "http://www.graalvm.org/",
@@ -70,7 +70,7 @@ suite = {
       },
     ]
   },
-
+  "ignore_suite_commit_info": True,
   "licenses" : {
     "upl" : {
       "name" : "Universal Permissive License, Version 1.0",
@@ -135,6 +135,9 @@ suite = {
       "dependencies" : ["com.oracle.truffle.regex"],
       "distDependencies" : [
         "truffle:TRUFFLE_API",
+      ],
+      "exclude" : [
+        "truffle:ICU4J",
       ],
       "maven" : {
         "artifactId" : "regex",

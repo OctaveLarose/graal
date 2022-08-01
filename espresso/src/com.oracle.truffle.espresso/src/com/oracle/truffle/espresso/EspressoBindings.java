@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2018, 2020, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2018, 2022, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -67,6 +67,10 @@ public final class EspressoBindings implements TruffleObject {
         this.loader = loader;
     }
 
+    public StaticObject getBindingsLoader() {
+        return loader;
+    }
+
     @ExportMessage
     @SuppressWarnings("static-method")
     Object getMembers(@SuppressWarnings("unused") boolean includeInternal) {
@@ -110,7 +114,7 @@ public final class EspressoBindings implements TruffleObject {
         try {
             StaticObject clazz = (StaticObject) meta.java_lang_Class_forName_String_boolean_ClassLoader.invokeDirect(null,
                             meta.toGuestString(member), false, loader);
-            return clazz.getMirrorKlass();
+            return clazz.getMirrorKlass(meta);
         } catch (EspressoException e) {
             error.enter();
             if (InterpreterToVM.instanceOf(e.getGuestException(), meta.java_lang_ClassNotFoundException)) {

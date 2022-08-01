@@ -119,6 +119,10 @@ final class PolyglotExceptionImpl {
                     boolean entered) {
         this.polyglot = polyglot;
         this.engine = engine;
+        /*
+         * If allowInterop == false, languageContext is passed just to get languageContext.context
+         * from it. It must not be used for anything else!
+         */
         this.context = (languageContext != null) ? languageContext.context : null;
         this.exception = original;
         this.guestFrames = TruffleStackTrace.getStackTrace(original);
@@ -190,7 +194,7 @@ final class PolyglotExceptionImpl {
                 this.exitStatus = 0;
                 this.guestObject = null;
             }
-            this.internal = !interrupted && !cancelled && !resourceExhausted && !exit;
+            this.internal = !interrupted && !cancelled && !resourceExhausted && !exit && !truffleException;
             if (exception instanceof CancelExecution) {
                 location = ((CancelExecution) exception).getSourceLocation();
             }

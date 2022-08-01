@@ -29,15 +29,18 @@
  */
 package com.oracle.truffle.llvm.runtime;
 
+import java.util.List;
+
 import com.oracle.truffle.api.frame.FrameDescriptor;
 import com.oracle.truffle.api.nodes.RepeatingNode;
 import com.oracle.truffle.api.nodes.RootNode;
 import com.oracle.truffle.api.source.Source;
+import com.oracle.truffle.llvm.runtime.datalayout.DataLayout;
 import com.oracle.truffle.llvm.runtime.debug.scope.LLVMSourceLocation;
 import com.oracle.truffle.llvm.runtime.memory.LLVMAllocateNode;
 import com.oracle.truffle.llvm.runtime.memory.LLVMMemMoveNode;
 import com.oracle.truffle.llvm.runtime.memory.LLVMMemSetNode;
-import com.oracle.truffle.llvm.runtime.memory.LLVMMemoryOpNode;
+import com.oracle.truffle.llvm.runtime.memory.LLVMMemorySizedOpNode;
 import com.oracle.truffle.llvm.runtime.memory.LLVMStack.LLVMStackAccess;
 import com.oracle.truffle.llvm.runtime.memory.LLVMStack.UniquesRegion;
 import com.oracle.truffle.llvm.runtime.memory.VarargsAreaStackAllocationNode;
@@ -50,14 +53,11 @@ import com.oracle.truffle.llvm.runtime.nodes.vars.LLVMWriteNode;
 import com.oracle.truffle.llvm.runtime.types.AggregateType;
 import com.oracle.truffle.llvm.runtime.types.ArrayType;
 import com.oracle.truffle.llvm.runtime.types.FunctionType;
-import com.oracle.truffle.llvm.runtime.types.StructureType;
 import com.oracle.truffle.llvm.runtime.types.Type;
 import com.oracle.truffle.llvm.runtime.types.Type.TypeOverflowException;
 import com.oracle.truffle.llvm.runtime.types.VectorType;
 import com.oracle.truffle.llvm.runtime.types.symbols.LocalVariableDebugInfo;
 import com.oracle.truffle.llvm.runtime.types.symbols.Symbol;
-
-import java.util.List;
 
 /**
  * This interface decouples the parser and the concrete implementation of the nodes by only making
@@ -65,6 +65,10 @@ import java.util.List;
  * instantiate a node, but instead use the factory facade.
  */
 public interface NodeFactory {
+
+    DataLayout getDataLayout();
+
+    LLVMLanguage getLanguage();
 
     boolean isCfgOsrEnabled();
 
@@ -95,6 +99,8 @@ public interface NodeFactory {
     LLVMExpressionNode createRMWXor(LLVMExpressionNode pointerNode, LLVMExpressionNode valueNode, Type type);
 
     LLVMStatementNode createFence();
+
+    LLVMExpressionNode createFenceExpression();
 
     LLVMExpressionNode createVectorLiteralNode(LLVMExpressionNode[] values, Type type);
 
@@ -185,13 +191,13 @@ public interface NodeFactory {
 
     LLVMMemSetNode createMemSet();
 
-    LLVMAllocateNode createAllocateGlobalsBlock(StructureType structType, boolean readOnly);
+    LLVMAllocateNode createAllocateGlobalsBlock(long totalSize);
 
-    LLVMMemoryOpNode createProtectGlobalsBlock();
+    LLVMMemorySizedOpNode createProtectGlobalsBlock();
 
-    LLVMMemoryOpNode createFreeGlobalsBlock(boolean readOnly);
+    LLVMMemorySizedOpNode createFreeGlobalsBlock();
 
-    LLVMMemoryOpNode getFreeGlobalsBlockUncached(boolean readOnly);
+    LLVMMemorySizedOpNode getFreeGlobalsBlockUncached();
 
     LLVMControlFlowNode createLoop(RepeatingNode body, int[] successorIDs);
 
@@ -199,6 +205,8 @@ public interface NodeFactory {
                     int[] successors, int successorSlot);
 
     LLVMExpressionNode createGetStackFromFrame();
+
+    boolean boxGlobals();
 
     LLVMStackAccess createStackAccess();
 

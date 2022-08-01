@@ -103,16 +103,12 @@ public class TStringOpsCalcStringAttributesUTF32Test extends TStringOpsTest<AMD6
     }
 
     @Test
-    public void testUTF32() throws ClassNotFoundException {
+    public void testUTF32() {
         test(getTStringOpsMethod("calcStringAttributesUTF32", Object.class, int.class, int.class), null, DUMMY_LOCATION, array, offset, length);
     }
 
     @Test
-    public void testUTF32I() throws ClassNotFoundException {
-        int[] intArray = new int[array.length / 4];
-        for (int i = 0; i < intArray.length; i++) {
-            intArray[i] = readValue(array, 2, i);
-        }
-        test(getTStringOpsMethod("calcStringAttributesUTF32I", int[].class, int.class, int.class), null, DUMMY_LOCATION, intArray, offset, length);
+    public void testUTF32I() {
+        test(getTStringOpsMethod("calcStringAttributesUTF32I", int[].class, int.class, int.class), null, DUMMY_LOCATION, toIntArray(array), offset, length);
     }
 }

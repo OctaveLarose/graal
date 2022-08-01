@@ -24,6 +24,7 @@
  */
 package com.oracle.svm.core.genscavenge;
 
+import com.oracle.svm.core.heap.OutOfMemoryUtil;
 import org.graalvm.nativeimage.Platform;
 import org.graalvm.nativeimage.Platforms;
 import org.graalvm.word.Pointer;
@@ -110,7 +111,7 @@ final class HeapChunkProvider {
             noteFirstAllocationTime();
             result = (AlignedHeader) CommittedMemoryProvider.get().allocateAlignedChunk(chunkSize, HeapParameters.getAlignedHeapChunkAlignment());
             if (result.isNull()) {
-                throw ALIGNED_OUT_OF_MEMORY_ERROR;
+                throw OutOfMemoryUtil.reportOutOfMemoryError(ALIGNED_OUT_OF_MEMORY_ERROR);
             }
             log().string("  new chunk: ").zhex(result).newline();
 
@@ -147,7 +148,7 @@ final class HeapChunkProvider {
         } else {
             UnsignedWord freeListBytes = getBytesInUnusedChunks();
             UnsignedWord reserveBytes = GCImpl.getPolicy().getMaximumFreeAlignedChunksSize();
-            UnsignedWord maxHeapFree = WordFactory.unsigned(HeapParameters.Options.MaxHeapFree.getValue());
+            UnsignedWord maxHeapFree = WordFactory.unsigned(SerialGCOptions.MaxHeapFree.getValue());
             if (maxHeapFree.aboveThan(0)) {
                 reserveBytes = UnsignedUtils.min(reserveBytes, maxHeapFree);
             }
@@ -272,7 +273,7 @@ final class HeapChunkProvider {
         noteFirstAllocationTime();
         UnalignedHeader result = (UnalignedHeader) CommittedMemoryProvider.get().allocateUnalignedChunk(chunkSize);
         if (result.isNull()) {
-            throw UNALIGNED_OUT_OF_MEMORY_ERROR;
+            throw OutOfMemoryUtil.reportOutOfMemoryError(UNALIGNED_OUT_OF_MEMORY_ERROR);
         }
 
         UnalignedHeapChunk.initialize(result, chunkSize);
@@ -314,13 +315,8 @@ final class HeapChunkProvider {
                         .string("/")
                         .signed(bytesInUnusedAlignedChunks.get().unsignedDivide(HeapParameters.getAlignedHeapChunkSize()));
         if (traceHeapChunks) {
-            if (unusedAlignedChunks.get().isNonNull()) {
-                log.newline().string("aligned chunks:").redent(true);
-                for (AlignedHeapChunk.AlignedHeader aChunk = unusedAlignedChunks.get(); aChunk.isNonNull(); aChunk = HeapChunk.getNext(aChunk)) {
-                    log.newline().zhex(aChunk).string(" (").zhex(AlignedHeapChunk.getObjectsStart(aChunk)).string("-").zhex(HeapChunk.getTopPointer(aChunk)).string(")");
-                }
-                log.redent(false);
-            }
+            AlignedHeapChunk.AlignedHeader firstChunk = unusedAlignedChunks.get();
+            HeapChunkLogging.logChunks(log, firstChunk);
         }
         log.redent(false);
         return log;

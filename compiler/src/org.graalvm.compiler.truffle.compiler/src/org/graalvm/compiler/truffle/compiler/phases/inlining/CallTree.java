@@ -39,6 +39,7 @@ public final class CallTree extends Graph {
     private final GraphManager graphManager;
     private final CallNode root;
     private final TruffleTierContext context;
+    final boolean useSize;
     int expanded = 1;
     int inlined = 1;
     int frontierSize;
@@ -49,6 +50,7 @@ public final class CallTree extends Graph {
         this.policy = policy;
         this.context = context;
         this.graphManager = new GraphManager(partialEvaluator, postPartialEvaluationSuite, context);
+        useSize = context.options.get(PolyglotCompilerOptions.InliningUseSize);
         // Should be kept as the last call in the constructor, as this is an argument.
         this.root = CallNode.makeRoot(this, context);
     }
@@ -121,10 +123,7 @@ public final class CallTree extends Graph {
 
     public void updateTracingInfo(TruffleInliningData inliningPlan) {
         final int inlinedWithoutRoot = inlined - 1;
-        if (tracingCallCounts()) {
-            inliningPlan.setCallCount(inlinedWithoutRoot + frontierSize);
-            inliningPlan.setInlinedCallCount(inlinedWithoutRoot);
-        }
+        inliningPlan.setCallCounts(inlinedWithoutRoot + frontierSize, inlinedWithoutRoot);
         if (loggingInlinedTargets()) {
             root.collectInlinedTargets(inliningPlan);
         }
@@ -132,13 +131,6 @@ public final class CallTree extends Graph {
 
     private boolean loggingInlinedTargets() {
         return context.debug.isDumpEnabled(DebugContext.BASIC_LEVEL) || context.options.get(PolyglotCompilerOptions.CompilationStatistics) ||
-                        context.options.get(PolyglotCompilerOptions.CompilationStatisticDetails);
-    }
-
-    private boolean tracingCallCounts() {
-        return context.options.get(PolyglotCompilerOptions.TraceCompilation) ||
-                        context.options.get(PolyglotCompilerOptions.TraceCompilationDetails) ||
-                        context.options.get(PolyglotCompilerOptions.CompilationStatistics) ||
                         context.options.get(PolyglotCompilerOptions.CompilationStatisticDetails);
     }
 }

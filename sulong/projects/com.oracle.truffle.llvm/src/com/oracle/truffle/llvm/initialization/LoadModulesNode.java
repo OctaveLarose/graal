@@ -141,7 +141,7 @@ public final class LoadModulesNode extends LLVMRootNode {
         this.hasInitialised = false;
         this.initContext = null;
         DataSectionFactory dataSectionFactory = new DataSectionFactory(parserResult);
-        this.initSymbols = new InitializeSymbolsNode(parserResult, lazyParsing, isInternalSulongLibrary, libraryName, dataSectionFactory);
+        this.initSymbols = new InitializeSymbolsNode(parserResult, lazyParsing, isInternalSulongLibrary, libraryName, dataSectionFactory, language);
         this.initExternals = new InitializeExternalNode(parserResult);
         this.initGlobals = new InitializeGlobalNode(parserResult, libraryName, dataSectionFactory);
         this.initOverwrite = new InitializeOverwriteNode(parserResult);
@@ -211,7 +211,7 @@ public final class LoadModulesNode extends LLVMRootNode {
     @SuppressWarnings("unchecked")
     private LLVMScopeChain loadModule(VirtualFrame frame, LLVMContext context) {
 
-        stackAccess.executeEnter(frame, getContext().getThreadingStack().getStack());
+        stackAccess.executeEnter(frame, getContext().getThreadingStack().getStack(this));
         try {
             LLVMLoadingPhase phase;
             // instead of creating a llvm local scope, just create a llvm scope here, and then put

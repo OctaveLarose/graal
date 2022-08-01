@@ -46,8 +46,10 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 
+import com.oracle.svm.core.sampler.ProfilingSampler;
 import org.graalvm.compiler.api.replacements.Fold;
 import org.graalvm.compiler.core.common.SuppressFBWarnings;
+import org.graalvm.compiler.serviceprovider.JavaVersionUtil;
 import org.graalvm.nativeimage.CurrentIsolate;
 import org.graalvm.nativeimage.ImageSingletons;
 import org.graalvm.nativeimage.Isolate;
@@ -174,7 +176,7 @@ public abstract class PlatformThreads {
     public static long getThreadAllocatedBytes(long javaThreadId) {
         // Accessing the value for the current thread is fast.
         Thread curThread = PlatformThreads.currentThread.get();
-        if (curThread != null && curThread.getId() == javaThreadId) {
+        if (curThread != null && JavaThreads.getThreadId(curThread) == javaThreadId) {
             return Heap.getHeap().getThreadAllocatedMemory(CurrentIsolate.getCurrentThread());
         }
 
@@ -184,8 +186,36 @@ public abstract class PlatformThreads {
             IsolateThread isolateThread = VMThreads.firstThread();
             while (isolateThread.isNonNull()) {
                 Thread javaThread = PlatformThreads.currentThread.get(isolateThread);
-                if (javaThread != null && javaThread.getId() == javaThreadId) {
+                if (javaThread != null && JavaThreads.getThreadId(javaThread) == javaThreadId) {
                     return Heap.getHeap().getThreadAllocatedMemory(isolateThread);
+                }
+                isolateThread = VMThreads.nextThread(isolateThread);
+            }
+            return -1;
+        } finally {
+            VMThreads.THREAD_MUTEX.unlock();
+        }
+    }
+
+    @Uninterruptible(reason = "Thread locks/holds the THREAD_MUTEX.")
+    public static long getThreadCpuTime(long javaThreadId, boolean includeSystemTime) {
+        if (!ImageSingletons.contains(ThreadCpuTimeSupport.class)) {
+            return -1;
+        }
+        // Accessing the value for the current thread is fast.
+        Thread curThread = PlatformThreads.currentThread.get();
+        if (curThread != null && JavaThreads.getThreadId(curThread) == javaThreadId) {
+            return ThreadCpuTimeSupport.getInstance().getCurrentThreadCpuTime(includeSystemTime);
+        }
+
+        // If the value of another thread is accessed, then we need to do a slow lookup.
+        VMThreads.lockThreadMutexInNativeCode();
+        try {
+            IsolateThread isolateThread = VMThreads.firstThread();
+            while (isolateThread.isNonNull()) {
+                Thread javaThread = PlatformThreads.currentThread.get(isolateThread);
+                if (javaThread != null && JavaThreads.getThreadId(javaThread) == javaThreadId) {
+                    return ThreadCpuTimeSupport.getInstance().getThreadCpuTime(VMThreads.findOSThreadHandleForIsolateThread(isolateThread), includeSystemTime);
                 }
                 isolateThread = VMThreads.nextThread(isolateThread);
             }
@@ -204,7 +234,7 @@ public abstract class PlatformThreads {
                 Thread javaThread = PlatformThreads.currentThread.get(isolateThread);
                 if (javaThread != null) {
                     for (int i = 0; i < javaThreadIds.length; i++) {
-                        if (javaThread.getId() == javaThreadIds[i]) {
+                        if (JavaThreads.getThreadId(javaThread) == javaThreadIds[i]) {
                             result[i] = Heap.getHeap().getThreadAllocatedMemory(isolateThread);
                             break;
                         }
@@ -418,8 +448,10 @@ public abstract class PlatformThreads {
         /* If the thread was manually started, finish initializing it. */
         if (manuallyStarted) {
             final ThreadGroup group = thread.getThreadGroup();
-            toTarget(group).addUnstarted();
-            toTarget(group).add(thread);
+            if (!(LoomSupport.isEnabled() || JavaVersionUtil.JAVA_SPEC >= 19) && !(VirtualThreads.isSupported() && VirtualThreads.singleton().isVirtual(thread))) {
+                toTarget(group).addUnstarted();
+                toTarget(group).add(thread);
+            }
 
             if (!thread.isDaemon()) {
                 nonDaemonThreads.incrementAndGet();
@@ -527,7 +559,8 @@ public abstract class PlatformThreads {
                     set.add(pool);
                 }
             } else {
-                Runnable target = toTarget(thread).target;
+                Target_java_lang_Thread tjlt = toTarget(thread);
+                Runnable target = JavaVersionUtil.JAVA_SPEC >= 19 ? tjlt.holder.task : tjlt.target;
                 if (Target_java_util_concurrent_ThreadPoolExecutor_Worker.class.isInstance(target)) {
                     ThreadPoolExecutor executor = SubstrateUtil.cast(target, Target_java_util_concurrent_ThreadPoolExecutor_Worker.class).executor;
                     if (executor != null && (executor.getClass() == ThreadPoolExecutor.class || executor.getClass() == ScheduledThreadPoolExecutor.class)) {
@@ -693,6 +726,10 @@ public abstract class PlatformThreads {
         singleton().unattachedStartedThreads.decrementAndGet();
         singleton().beforeThreadRun(thread);
 
+        if (ImageSingletons.contains(ProfilingSampler.class)) {
+            ImageSingletons.lookup(ProfilingSampler.class).registerSampler();
+        }
+
         try {
             if (VMThreads.isTearingDown()) {
                 /*
@@ -744,6 +781,12 @@ public abstract class PlatformThreads {
         GetAllStackTracesOperation vmOp = new GetAllStackTracesOperation();
         vmOp.enqueue();
         return vmOp.result;
+    }
+
+    static Thread[] getAllThreads() {
+        GetAllThreadsOperation vmOp = new GetAllThreadsOperation();
+        vmOp.enqueue();
+        return vmOp.result.toArray(new Thread[0]);
     }
 
     @NeverInline("Starting a stack walk in the caller frame")
@@ -939,6 +982,22 @@ public abstract class PlatformThreads {
         }
     }
 
+    private static class GetAllThreadsOperation extends JavaVMOperation {
+        private final ArrayList<Thread> result;
+
+        GetAllThreadsOperation() {
+            super(VMOperationInfos.get(GetAllThreadsOperation.class, "Get all threads", SystemEffect.SAFEPOINT));
+            result = new ArrayList<>();
+        }
+
+        @Override
+        protected void operate() {
+            for (IsolateThread cur = VMThreads.firstThread(); cur.isNonNull(); cur = VMThreads.nextThread(cur)) {
+                result.add(PlatformThreads.fromVMThread(cur));
+            }
+        }
+    }
+
     /**
      * Builds a list of all application threads. This must be done in a VM operation because only
      * there we are allowed to allocate Java memory while holding the {@link VMThreads#THREAD_MUTEX}
@@ -1009,7 +1068,10 @@ public abstract class PlatformThreads {
                                 final boolean interruptedStatus = JavaThreads.isInterrupted(thread);
                                 trace.string("  thread.getName(): ").string(name)
                                                 .string("  interruptedStatus: ").bool(interruptedStatus)
-                                                .string("  getState(): ").string(status.name());
+                                                .string("  getState(): ").string(status.name()).newline();
+                                for (StackTraceElement e : thread.getStackTrace()) {
+                                    trace.string(e.toString()).newline();
+                                }
                             }
                             trace.newline().flush();
                         }

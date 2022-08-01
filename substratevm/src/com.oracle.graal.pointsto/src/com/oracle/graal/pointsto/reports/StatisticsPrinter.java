@@ -35,10 +35,10 @@ import com.oracle.graal.pointsto.PointsToAnalysis;
 import com.oracle.graal.pointsto.flow.InstanceOfTypeFlow;
 import com.oracle.graal.pointsto.flow.MethodFlowsGraph;
 import com.oracle.graal.pointsto.flow.MethodTypeFlow;
-import com.oracle.graal.pointsto.flow.context.BytecodeLocation;
 import com.oracle.graal.pointsto.meta.AnalysisField;
 import com.oracle.graal.pointsto.meta.AnalysisMethod;
 import com.oracle.graal.pointsto.meta.AnalysisType;
+import com.oracle.graal.pointsto.results.StaticAnalysisResultsBuilder;
 import com.oracle.graal.pointsto.typestate.TypeState;
 
 public final class StatisticsPrinter {
@@ -178,26 +178,29 @@ public final class StatisticsPrinter {
             /*- Type check stats are only available if points-to analysis is on. */
             return new long[4];
         }
-        PointsToAnalysis pointsToAnalysis = (PointsToAnalysis) bb;
+        PointsToAnalysis pta = (PointsToAnalysis) bb;
         long totalFilters = 0;
         long totalRemovableFilters = 0;
         long appTotalFilters = 0;
         long appTotalRemovableFilters = 0;
 
-        for (AnalysisMethod method : pointsToAnalysis.getUniverse().getMethods()) {
+        for (AnalysisMethod method : pta.getUniverse().getMethods()) {
 
             boolean runtimeMethod = isRuntimeLibraryType(method.getDeclaringClass());
             MethodTypeFlow methodFlow = PointsToAnalysis.assertPointsToAnalysisMethod(method).getTypeFlow();
-            MethodFlowsGraph originalFlows = methodFlow.getOriginalMethodFlows();
+            if (!methodFlow.flowsGraphCreated()) {
+                continue;
+            }
+            MethodFlowsGraph originalFlows = methodFlow.getMethodFlowsGraph();
 
             var cursor = originalFlows.getInstanceOfFlows().getEntries();
             while (cursor.advance()) {
-                if (BytecodeLocation.isValidBci(cursor.getKey())) {
+                if (StaticAnalysisResultsBuilder.isValidBci(cursor.getKey())) {
                     totalFilters++;
                     InstanceOfTypeFlow originalInstanceOf = cursor.getValue();
 
-                    boolean isSaturated = methodFlow.isSaturated(pointsToAnalysis, originalInstanceOf);
-                    TypeState instanceOfTypeState = methodFlow.foldTypeFlow(pointsToAnalysis, originalInstanceOf);
+                    boolean isSaturated = methodFlow.isSaturated(pta, originalInstanceOf);
+                    TypeState instanceOfTypeState = methodFlow.foldTypeFlow(pta, originalInstanceOf);
                     if (!isSaturated && instanceOfTypeState.typesCount() < 2) {
                         totalRemovableFilters++;
                     }

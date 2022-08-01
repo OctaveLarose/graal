@@ -66,8 +66,6 @@ public class CommonConstants {
      * Relative path for the component storage.
      */
     public static final String PATH_COMPONENT_STORAGE = "lib/installer/components"; // NOI18N
-    // the trailing backspace is important !
-    public static final String PATH_POLYGLOT_REGISTRY = "lib/installer/components/polyglot/"; // NOI18N
 
     public static final String PATH_JRE_BIN = "bin/"; // NOI18N
 
@@ -108,11 +106,6 @@ public class CommonConstants {
 
     public static final String CAP_CATALOG_URL = "url"; // NOI18N
     public static final String CAP_CATALOG_LABEL = "label"; // NOI18N
-
-    /**
-     * Warns the user to rebuild the polyglot image and/or libraries.
-     */
-    public static final boolean WARN_REBUILD_IMAGES = true;
 
     /**
      * Component ID prefix for graalvm core components. The prefix will be stripped from the
@@ -179,4 +172,17 @@ public class CommonConstants {
     public static final String SYSPROP_OS_NAME = "os.name"; // NOI18N
     public static final String SYSPROP_ARCH_NAME = "os.arch"; // NOI18N
     public static final String SYSPROP_USER_HOME = "user.home"; // NOI18N
+
+    public static final String JSON_KEY_COMPONENTS = "components"; // NOI18N
+    public static final String JSON_KEY_COMPONENT_ID = "id"; // NOI18N
+    public static final String JSON_KEY_COMPONENT_VERSION = "version"; // NOI18N
+    public static final String JSON_KEY_COMPONENT_NAME = "name"; // NOI18N
+    public static final String JSON_KEY_COMPONENT_FILENAME = "filename"; // NOI18N
+    public static final String JSON_KEY_COMPONENT_GRAALVM = "graalvm"; // NOI18N
+    public static final String JSON_KEY_COMPONENT_STABILITY = "stability"; // NOI18N
+    public static final String JSON_KEY_COMPONENT_ORIGIN = "origin"; // NOI18N
+    public static final String JSON_KEY_COMPONENT_FILES = "files"; // NOI18N
+    public static final String JSON_KEY_COMPONENT_REQUIRES = "requires"; // NOI18N
+    public static final String JSON_KEY_COMPONENT_ERRORS = "errors"; // NOI18N
+    public static final String JSON_KEY_COMPONENT_PROBLEMS = "problems"; // NOI18N
 }

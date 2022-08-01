@@ -153,21 +153,17 @@ public class TStringOpsCalcStringAttributesUTF16Test extends TStringOpsTest<AMD6
     }
 
     @Test
-    public void testValid() throws ClassNotFoundException {
+    public void testValid() {
         test(getTStringOpsMethod("calcStringAttributesUTF16", Object.class, int.class, int.class, boolean.class), null, DUMMY_LOCATION, array, offset, length, true);
     }
 
     @Test
-    public void testUnknown() throws ClassNotFoundException {
+    public void testUnknown() {
         test(getTStringOpsMethod("calcStringAttributesUTF16", Object.class, int.class, int.class, boolean.class), null, DUMMY_LOCATION, array, offset, length, false);
     }
 
     @Test
-    public void testUnknownC() throws ClassNotFoundException {
-        char[] charArray = new char[array.length / 2];
-        for (int i = 0; i < charArray.length; i++) {
-            charArray[i] = (char) readValue(array, 1, i);
-        }
-        test(getTStringOpsMethod("calcStringAttributesUTF16C", char[].class, int.class, int.class), null, DUMMY_LOCATION, charArray, offset, length);
+    public void testUnknownC() {
+        test(getTStringOpsMethod("calcStringAttributesUTF16C", char[].class, int.class, int.class), null, DUMMY_LOCATION, toCharArray(array), offset, length);
     }
 }

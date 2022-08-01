@@ -24,8 +24,8 @@
  */
 package com.oracle.svm.jvmtiagentbase;
 
+import static com.oracle.svm.core.jni.JNIObjectHandles.nullHandle;
 import static com.oracle.svm.core.util.VMError.guarantee;
-import static com.oracle.svm.jni.JNIObjectHandles.nullHandle;
 import static org.graalvm.nativeimage.c.type.CTypeConversion.CCharPointerHolder;
 import static org.graalvm.word.WordFactory.nullPointer;
 
@@ -39,14 +39,14 @@ import org.graalvm.nativeimage.c.type.CTypeConversion;
 import org.graalvm.nativeimage.c.type.WordPointer;
 
 import com.oracle.svm.core.SubstrateUtil;
+import com.oracle.svm.core.jni.headers.JNIEnvironment;
+import com.oracle.svm.core.jni.headers.JNIErrors;
+import com.oracle.svm.core.jni.headers.JNIFieldId;
+import com.oracle.svm.core.jni.headers.JNIMethodId;
+import com.oracle.svm.core.jni.headers.JNINativeInterface;
+import com.oracle.svm.core.jni.headers.JNIObjectHandle;
+import com.oracle.svm.core.jni.headers.JNIValue;
 import com.oracle.svm.core.util.VMError;
-import com.oracle.svm.jni.nativeapi.JNIEnvironment;
-import com.oracle.svm.jni.nativeapi.JNIErrors;
-import com.oracle.svm.jni.nativeapi.JNIFieldId;
-import com.oracle.svm.jni.nativeapi.JNIMethodId;
-import com.oracle.svm.jni.nativeapi.JNINativeInterface;
-import com.oracle.svm.jni.nativeapi.JNIObjectHandle;
-import com.oracle.svm.jni.nativeapi.JNIValue;
 import com.oracle.svm.jvmtiagentbase.jvmti.JvmtiEnv;
 import com.oracle.svm.jvmtiagentbase.jvmti.JvmtiError;
 import com.oracle.svm.jvmtiagentbase.jvmti.JvmtiFrameInfo;
@@ -162,14 +162,6 @@ public final class Support {
         return jniFunctions().getIsAssignableFrom().invoke(env, serializeTargetClass, JvmtiAgentBase.singleton().handles().javaIoSerializable);
     }
 
-    public static JNIObjectHandle getCallerClass(int depth) {
-        return getMethodDeclaringClass(getCallerMethod(depth));
-    }
-
-    public static JNIObjectHandle getDirectCallerClass() {
-        return getCallerClass(1);
-    }
-
     public static JNIMethodId getCallerMethod(int depth) {
         JvmtiFrameInfo frameInfo = StackValue.get(JvmtiFrameInfo.class);
         CIntPointer countPtr = StackValue.get(CIntPointer.class);
@@ -183,6 +175,20 @@ public final class Support {
     public static JNIObjectHandle getObjectArgument(int slot) {
         WordPointer handlePtr = StackValue.get(WordPointer.class);
         if (jvmtiFunctions().GetLocalObject().invoke(jvmtiEnv(), nullHandle(), 0, slot, handlePtr) != JvmtiError.JVMTI_ERROR_NONE) {
+            return nullHandle();
+        }
+        return handlePtr.read();
+    }
+
+    /**
+     * This method might be slightly faster than {@link #getObjectArgument}, but can only be used
+     * for instance methods, not static methods.
+     */
+    public static JNIObjectHandle getReceiver() {
+        WordPointer handlePtr = StackValue.get(WordPointer.class);
+        JvmtiError result = jvmtiFunctions().GetLocalInstance().invoke(jvmtiEnv(), nullHandle(), 0, handlePtr);
+        if (result != JvmtiError.JVMTI_ERROR_NONE) {
+            assert result != JvmtiError.JVMTI_ERROR_INVALID_SLOT : "not an instance method";
             return nullHandle();
         }
         return handlePtr.read();

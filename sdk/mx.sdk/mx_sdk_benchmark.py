@@ -1,5 +1,5 @@
 #
-# Copyright (c) 2019, 2021, Oracle and/or its affiliates. All rights reserved.
+# Copyright (c) 2019, 2022, Oracle and/or its affiliates. All rights reserved.
 # DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
 #
 # The Universal Permissive License (UPL), Version 1.0
@@ -210,6 +210,14 @@ class NativeImageBenchmarkMixin(object):
         """
         return image_run_args + parse_prefixed_args('-Dnative-image.benchmark.extra-agent-run-arg=', args)
 
+    def extra_agentlib_options(self, benchmark, args, image_run_args):
+        """Returns additional native-image-agent options.
+
+        The returned options are added to the agentlib:native-image-agent option list.
+        The config-output-dir is configured by the benchmark runner and cannot be overridden.
+        """
+        return []
+
     def extra_profile_run_arg(self, benchmark, args, image_run_args):
         """Returns all arguments passed to the profiling run.
 
@@ -234,6 +242,13 @@ class NativeImageBenchmarkMixin(object):
         parsed_args = parse_prefixed_args('-Dnative-image.benchmark.benchmark-output-dir=', args)
         if parsed_args:
             return parsed_args[0]
+        else:
+            return None
+
+    def pgo_iteration_num(self, _, args):
+        parsed_args = parse_prefixed_args('-Dnative-image.benchmark.pgo-iteration-num=', args)
+        if parsed_args:
+            return int(parsed_args[0])
         else:
             return None
 
@@ -268,9 +283,11 @@ def measureTimeToFirstResponse(bmSuite):
     measurementStartTime = time.time()
     sentRequests = 0
     receivedNon200Responses = 0
-    while time.time() - measurementStartTime < 60:
+    last_report_time = time.time()
+    while time.time() - measurementStartTime < 120:
         time.sleep(.0001)
-        if sentRequests > 0 and sentRequests % 10000 == 0:
+        if sentRequests > 0 and time.time() - last_report_time > 10:
+            last_report_time = time.time()
             mx.log("Sent {:d} requests so far but did not receive a response with code 200 yet.".format(sentRequests))
 
         try:
@@ -321,7 +338,7 @@ class BaseMicroserviceBenchmarkSuite(mx_benchmark.JavaBenchmarkSuite, NativeImag
         self.measureLatency = None
         self.parser = argparse.ArgumentParser()
         self.parser.add_argument("--workload-configuration", type=str, default=None, help="Path to workload configuration.")
-        self.parser.add_argument("--skip-latency-measurements", action='store_true', default=False, help="Determines if the latency measurements should be skipped.")
+        self.parser.add_argument("--skip-latency-measurements", action='store_true', help="Determines if the latency measurements should be skipped.")
 
     def benchMicroserviceName(self):
         """
@@ -663,6 +680,12 @@ class EmptyEnv():
     def __enter__(self):
         self._prev_environ = os.environ
         os.environ = {}
+        # urllib.request caches http_proxy, https_proxy etc. globally but doesn't cache no_proxy
+        # preserve no_proxy to avoid issues with proxies
+        if 'no_proxy' in self._prev_environ:
+            os.environ['no_proxy'] = self._prev_environ['no_proxy']
+        if 'NO_PROXY' in self._prev_environ:
+            os.environ['NO_PROXY'] = self._prev_environ['NO_PROXY']
     def __exit__(self, exc_type, exc_val, exc_tb):
         os.environ = self._prev_environ
 

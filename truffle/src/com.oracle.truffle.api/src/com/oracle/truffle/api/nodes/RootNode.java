@@ -386,17 +386,23 @@ public abstract class RootNode extends ExecutableNode {
         // Check isLoaded to avoid returning a CallTarget before notifyOnLoad() is done
         if (target == null || !NodeAccessor.RUNTIME.isLoaded(target)) {
             CompilerDirectives.transferToInterpreterAndInvalidate();
-            ReentrantLock l = getLazyLock();
-            l.lock();
-            try {
-                target = this.callTarget;
-                if (target == null) {
-                    target = NodeAccessor.RUNTIME.newCallTarget(null, this);
-                    this.setupCallTarget(target, "callTarget was set by newCallTarget but should not");
-                }
-            } finally {
-                l.unlock();
+            target = initializeTarget();
+        }
+        return target;
+    }
+
+    private RootCallTarget initializeTarget() {
+        RootCallTarget target;
+        ReentrantLock l = getLazyLock();
+        l.lock();
+        try {
+            target = this.callTarget;
+            if (target == null) {
+                target = NodeAccessor.RUNTIME.newCallTarget(null, this);
+                this.setupCallTarget(target, "callTarget was set by newCallTarget but should not");
             }
+        } finally {
+            l.unlock();
         }
         return target;
     }
@@ -423,32 +429,6 @@ public abstract class RootNode extends ExecutableNode {
     /** @since 0.8 or earlier */
     public final FrameDescriptor getFrameDescriptor() {
         return frameDescriptor;
-    }
-
-    /**
-     * @throws UnsupportedOperationException if a call target already exists.
-     * @since 19.0
-     * @deprecated in 22.0, call targets are lazily initialized in {@link #getCallTarget()} now.
-     */
-    @Deprecated(since = "22.0")
-    protected final void setCallTarget(RootCallTarget callTarget) {
-        if (this.callTarget != null) {
-            throw new UnsupportedOperationException();
-        }
-        this.callTarget = callTarget;
-    }
-
-    /**
-     * Get compiler options specific to this <code>RootNode</code>.
-     *
-     * @since 0.8 or earlier
-     * @deprecated in 22.1 compiler options had no effect for several releases now. Deprecated for
-     *             removal.
-     */
-    @SuppressWarnings("deprecation")
-    @Deprecated(since = "22.1")
-    public com.oracle.truffle.api.CompilerOptions getCompilerOptions() {
-        return com.oracle.truffle.api.impl.DefaultCompilerOptions.INSTANCE;
     }
 
     /**

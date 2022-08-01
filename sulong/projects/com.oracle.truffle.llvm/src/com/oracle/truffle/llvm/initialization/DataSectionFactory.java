@@ -29,20 +29,18 @@
  */
 package com.oracle.truffle.llvm.initialization;
 
+import java.util.ArrayList;
+import java.util.List;
+
 import com.oracle.truffle.api.CompilerDirectives;
 import com.oracle.truffle.api.CompilerDirectives.CompilationFinal;
+import com.oracle.truffle.llvm.parser.LLVMParser;
 import com.oracle.truffle.llvm.parser.LLVMParserResult;
 import com.oracle.truffle.llvm.parser.model.symbols.globals.GlobalVariable;
-import com.oracle.truffle.llvm.runtime.NodeFactory;
 import com.oracle.truffle.llvm.runtime.datalayout.DataLayout;
-import com.oracle.truffle.llvm.runtime.memory.LLVMAllocateNode;
-import com.oracle.truffle.llvm.runtime.types.PointerType;
 import com.oracle.truffle.llvm.runtime.types.PrimitiveType;
 import com.oracle.truffle.llvm.runtime.types.StructureType;
 import com.oracle.truffle.llvm.runtime.types.Type;
-
-import java.util.ArrayList;
-import java.util.List;
 
 public class DataSectionFactory {
 
@@ -54,10 +52,15 @@ public class DataSectionFactory {
     private DataSection rwSection;
     private DataSection threadLocalSection;
 
+    // The index for thread local global objects
+    private int globalContainerIndex = -1;
+    private int threadLocalGlobalContainerLength = 0;
+
     public DataSectionFactory(LLVMParserResult result) throws Type.TypeOverflowException {
         DataLayout dataLayout = result.getDataLayout();
         int globalsCount = result.getDefinedGlobals().size();
         int threadLocalGlobalsCount = result.getThreadLocalGlobals().size();
+        boolean boxGlobals = result.getRuntime().getNodeFactory().boxGlobals();
 
         this.globalOffsets = new int[globalsCount];
         this.threadLocalGlobalOffsets = new int[threadLocalGlobalsCount];
@@ -72,7 +75,7 @@ public class DataSectionFactory {
         for (int i = 0; i < globalsCount; i++) {
             GlobalVariable global = definedGlobals.get(i);
             Type type = global.getType().getPointeeType();
-            if (isSpecialGlobalSlot(type)) {
+            if (boxGlobals && LLVMParser.isSpecialGlobalSlot(type)) {
                 globalOffsets[i] = -1; // pointer type
             } else {
                 // allocate at least one byte per global (to make the pointers unique)
@@ -93,14 +96,20 @@ public class DataSectionFactory {
         for (int i = 0; i < threadLocalGlobalsCount; i++) {
             GlobalVariable tlGlobals = threadLocalGlobals.get(i);
             Type type = tlGlobals.getType().getPointeeType();
-            long offset = threadLocalSection.add(tlGlobals, type);
-            assert offset >= 0;
-            if (offset > Integer.MAX_VALUE) {
-                throw CompilerDirectives.shouldNotReachHere("globals section >2GB not supported");
+            if (LLVMParser.isSpecialGlobalSlot(type)) {
+                // pointer type
+                threadLocalGlobalContainerLength++;
+                threadLocalGlobalOffsets[i] = globalContainerIndex;
+                globalContainerIndex--;
+            } else {
+                long offset = threadLocalSection.add(tlGlobals, type);
+                assert offset >= 0;
+                if (offset > Integer.MAX_VALUE) {
+                    throw CompilerDirectives.shouldNotReachHere("globals section >2GB not supported");
+                }
+                threadLocalGlobalOffsets[i] = (int) offset;
             }
-            threadLocalGlobalOffsets[i] = (int) offset;
         }
-
     }
 
     DataSection getRoSection() {
@@ -127,6 +136,10 @@ public class DataSectionFactory {
         return threadLocalGlobalOffsets;
     }
 
+    int getThreadLocalGlobalContainerLength() {
+        return threadLocalGlobalContainerLength;
+    }
+
     static final class DataSection {
 
         final DataLayout dataLayout;
@@ -149,10 +162,9 @@ public class DataSectionFactory {
             return ret;
         }
 
-        LLVMAllocateNode createAllocateNode(NodeFactory factory, String typeName, boolean readOnly) {
+        StructureType getStructureType(String typeName) {
             if (offset > 0) {
-                StructureType structType = StructureType.createNamedFromList(typeName, true, types);
-                return factory.createAllocateGlobalsBlock(structType, readOnly);
+                return StructureType.createNamedFromList(typeName, true, types);
             } else {
                 return null;
             }
@@ -167,14 +179,6 @@ public class DataSectionFactory {
             result.add(PrimitiveType.getIntegerType(size * Byte.SIZE));
             remaining -= size;
         }
-    }
-
-    /**
-     * Globals of pointer type need to be handles specially because they can potentially contain a
-     * foreign object.
-     */
-    private static boolean isSpecialGlobalSlot(Type type) {
-        return type instanceof PointerType;
     }
 
     private static int getAlignment(DataLayout dataLayout, GlobalVariable global, Type type) {

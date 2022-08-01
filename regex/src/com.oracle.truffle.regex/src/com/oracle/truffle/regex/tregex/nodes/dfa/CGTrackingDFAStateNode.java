@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2018, 2021, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2018, 2022, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * The Universal Permissive License (UPL), Version 1.0
@@ -56,10 +56,9 @@ public class CGTrackingDFAStateNode extends DFAStateNode {
     public CGTrackingDFAStateNode(short id,
                     byte flags,
                     short loopTransitionIndex,
-                    LoopOptimizationNode loopOptimizationNode,
+                    IndexOfCall indexOfCall,
                     short[] successors,
                     Matchers matchers,
-                    AllTransitionsInOneTreeMatcher allTransitionsInOneTreeMatcher,
                     short[] lastTransitionIndex,
                     DFACaptureGroupLazyTransition[] lazyTransitions,
                     DFACaptureGroupLazyTransition preAnchoredFinalStateTransition,
@@ -67,7 +66,7 @@ public class CGTrackingDFAStateNode extends DFAStateNode {
                     DFACaptureGroupPartialTransition anchoredFinalStateTransition,
                     DFACaptureGroupPartialTransition unAnchoredFinalStateTransition,
                     DFACaptureGroupPartialTransition cgLoopToSelf) {
-        super(id, flags, loopTransitionIndex, loopOptimizationNode, successors, matchers, null, allTransitionsInOneTreeMatcher);
+        super(id, flags, loopTransitionIndex, indexOfCall, successors, matchers, null);
         this.anchoredFinalStateTransition = anchoredFinalStateTransition;
         this.unAnchoredFinalStateTransition = unAnchoredFinalStateTransition;
         this.lastTransitionIndex = lastTransitionIndex;
@@ -135,7 +134,7 @@ public class CGTrackingDFAStateNode extends DFAStateNode {
             }
             locals.setIndex(postLoopIndex);
         }
-        executor.inputIncNextIndexRaw(locals, loopOptimizationNode.encodedLength());
+        executor.inputIncNextIndexRaw(locals, indexOfCall.encodedLength());
         if (executor.isSearching()) {
             checkFinalState(locals, executor);
         }

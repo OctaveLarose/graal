@@ -41,7 +41,7 @@ import org.graalvm.nativeimage.hosted.Feature;
 import com.oracle.graal.pointsto.meta.AnalysisMethod;
 import com.oracle.svm.core.SubstrateOptions;
 import com.oracle.svm.core.annotate.AutomaticFeature;
-import com.oracle.svm.core.graal.GraalFeature;
+import com.oracle.svm.core.graal.InternalFeature;
 import com.oracle.svm.core.graal.code.SubstrateBackend;
 import com.oracle.svm.core.graal.code.SubstrateBackendFactory;
 import com.oracle.svm.core.graal.code.SubstrateLoweringProviderFactory;
@@ -49,11 +49,8 @@ import com.oracle.svm.core.graal.code.SubstrateSuitesCreatorProvider;
 import com.oracle.svm.core.graal.llvm.lowering.LLVMLoadExceptionObjectLowering;
 import com.oracle.svm.core.graal.llvm.lowering.SubstrateLLVMLoweringProvider;
 import com.oracle.svm.core.graal.llvm.replacements.LLVMGraphBuilderPlugins;
-import com.oracle.svm.core.graal.llvm.replacements.LLVMIntrinsicNode;
 import com.oracle.svm.core.graal.llvm.runtime.LLVMExceptionUnwind;
 import com.oracle.svm.core.graal.llvm.util.LLVMOptions;
-import com.oracle.svm.core.graal.llvm.util.LLVMToolchain;
-import com.oracle.svm.core.graal.llvm.util.LLVMToolchain.RunFailureException;
 import com.oracle.svm.core.graal.meta.RuntimeConfiguration;
 import com.oracle.svm.core.graal.snippets.NodeLoweringProvider;
 import com.oracle.svm.core.option.HostedOptionKey;
@@ -61,6 +58,8 @@ import com.oracle.svm.core.snippets.ExceptionUnwind;
 import com.oracle.svm.core.util.UserError;
 import com.oracle.svm.hosted.FeatureImpl;
 import com.oracle.svm.hosted.code.CompileQueue;
+import com.oracle.svm.hosted.image.LLVMToolchain;
+import com.oracle.svm.hosted.image.LLVMToolchain.RunFailureException;
 import com.oracle.svm.hosted.image.NativeImageCodeCache;
 import com.oracle.svm.hosted.image.NativeImageCodeCacheFactory;
 import com.oracle.svm.hosted.image.NativeImageHeap;
@@ -73,7 +72,7 @@ import com.oracle.svm.util.ModuleSupport;
  */
 @AutomaticFeature
 @Platforms({Platform.LINUX.class, Platform.DARWIN.class})
-public class LLVMFeature implements Feature, GraalFeature {
+public class LLVMFeature implements Feature, InternalFeature {
 
     @Override
     public boolean isInConfiguration(IsInConfigurationAccess access) {
@@ -90,7 +89,8 @@ public class LLVMFeature implements Feature, GraalFeature {
     @Override
     public void afterRegistration(AfterRegistrationAccess access) {
         if (ModuleSupport.modulePathBuild) {
-            ModuleSupport.openModuleByClass(LLVMIntrinsicNode.class, NodeClass.class);
+            ModuleSupport.accessModuleByClass(ModuleSupport.Access.EXPORT, NodeClass.class, LLVMGraphBuilderPlugins.class);
+            ModuleSupport.accessModuleByClass(ModuleSupport.Access.EXPORT, NodeClass.class, SubstrateLLVMLoweringProvider.class);
         }
 
         ImageSingletons.add(SubstrateBackendFactory.class, new SubstrateBackendFactory() {

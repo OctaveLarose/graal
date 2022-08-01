@@ -70,7 +70,6 @@ import com.oracle.truffle.espresso.classfile.attributes.ExceptionsAttribute;
 import com.oracle.truffle.espresso.classfile.attributes.LineNumberTableAttribute;
 import com.oracle.truffle.espresso.classfile.attributes.LocalVariableTable;
 import com.oracle.truffle.espresso.classfile.attributes.SignatureAttribute;
-import com.oracle.truffle.espresso.classfile.attributes.SourceFileAttribute;
 import com.oracle.truffle.espresso.descriptors.Signatures;
 import com.oracle.truffle.espresso.descriptors.Symbol;
 import com.oracle.truffle.espresso.descriptors.Symbol.Name;
@@ -98,6 +97,7 @@ import com.oracle.truffle.espresso.nodes.interop.AbstractLookupNode;
 import com.oracle.truffle.espresso.nodes.methodhandle.MethodHandleIntrinsicNode;
 import com.oracle.truffle.espresso.runtime.Attribute;
 import com.oracle.truffle.espresso.runtime.EspressoContext;
+import com.oracle.truffle.espresso.runtime.GuestAllocator;
 import com.oracle.truffle.espresso.runtime.MethodHandleIntrinsics;
 import com.oracle.truffle.espresso.runtime.StaticObject;
 import com.oracle.truffle.espresso.vm.InterpreterToVM;
@@ -225,8 +225,6 @@ public final class Method extends Member<Signature> implements TruffleObject, Co
         Objects.requireNonNull(accessor);
         return isLeaf;
     }
-
-    private Source source;
 
     public int getRefKind() {
         return getMethodVersion().getRefKind();
@@ -654,24 +652,16 @@ public final class Method extends Member<Signature> implements TruffleObject, Co
         getMethodVersion().poisonPill = true;
     }
 
-    public String getSourceFile() {
-        // we have to do this atomically in regards to class redefinition
-        ObjectKlass.KlassVersion klassVersion = declaringKlass.getKlassVersion();
-
-        SourceFileAttribute sfa = (SourceFileAttribute) klassVersion.getAttribute(Name.SourceFile);
-
-        if (sfa == null) {
-            return "unknown source";
-        }
-        return klassVersion.getConstantPool().utf8At(sfa.getSourceFileIndex()).toString();
-    }
-
     public boolean hasSourceFileAttribute() {
         return declaringKlass.getAttribute(Name.SourceFile) != null;
     }
 
     public String report(int curBCI) {
-        return "at " + MetaUtil.internalNameToJava(getDeclaringKlass().getType().toString(), true, false) + "." + getName() + "(" + getSourceFile() + ":" + bciToLineNumber(curBCI) + ")";
+        String sourceFile = getDeclaringKlass().getSourceFile();
+        if (sourceFile == null) {
+            sourceFile = "unknown source";
+        }
+        return "at " + MetaUtil.internalNameToJava(getDeclaringKlass().getType().toString(), true, false) + "." + getName() + "(" + sourceFile + ":" + bciToLineNumber(curBCI) + ")";
     }
 
     public String report() {
@@ -745,7 +735,7 @@ public final class Method extends Member<Signature> implements TruffleObject, Co
     }
 
     @SuppressWarnings("unused")
-    void printBytecodes(PrintStream out) {
+    public void printBytecodes(PrintStream out) {
         new BytecodeStream(getOriginalCode()).printBytecode(declaringKlass, out);
     }
 
@@ -758,11 +748,7 @@ public final class Method extends Member<Signature> implements TruffleObject, Co
      */
 
     public Source getSource() {
-        Source localSource = this.source;
-        if (localSource == null) {
-            this.source = localSource = getContext().findOrCreateSource(this);
-        }
-        return localSource;
+        return getDeclaringKlass().getSource();
     }
 
     @TruffleBoundary
@@ -840,9 +826,11 @@ public final class Method extends Member<Signature> implements TruffleObject, Co
         return resolveParameterKlasses();
     }
 
+    @TruffleBoundary
     public Object invokeMethod(Object callee, Object[] args) {
         if (isConstructor()) {
-            Object theCallee = InterpreterToVM.newObject(getDeclaringKlass(), false);
+            GuestAllocator.AllocationChecks.checkCanAllocateNewReference(getMeta(), getDeclaringKlass(), false);
+            Object theCallee = getAllocator().createNew(getDeclaringKlass());
             invokeWithConversions(theCallee, args);
             return theCallee;
         }
@@ -1006,8 +994,7 @@ public final class Method extends Member<Signature> implements TruffleObject, Co
         return removedByRedefinition;
     }
 
-    public StaticObject makeMirror() {
-        Meta meta = getMeta();
+    public StaticObject makeMirror(Meta meta) {
         Attribute rawRuntimeVisibleAnnotations = getAttribute(Name.RuntimeVisibleAnnotations);
         StaticObject runtimeVisibleAnnotations = rawRuntimeVisibleAnnotations != null
                         ? StaticObject.wrap(rawRuntimeVisibleAnnotations.getData(), meta)
@@ -1052,7 +1039,7 @@ public final class Method extends Member<Signature> implements TruffleObject, Co
             guestGenericSignature = meta.toGuestString(sig);
         }
 
-        StaticObject instance = meta.java_lang_reflect_Method.allocateInstance();
+        StaticObject instance = meta.java_lang_reflect_Method.allocateInstance(meta.getContext());
 
         meta.java_lang_reflect_Method_init.invokeDirect(
                         /* this */ instance,
@@ -1209,38 +1196,45 @@ public final class Method extends Member<Signature> implements TruffleObject, Co
         }
 
         public CallTarget getCallTarget() {
-            if (callTarget == null) {
-                CompilerDirectives.transferToInterpreterAndInvalidate();
-                Meta meta = getMeta();
-                checkPoisonPill(meta);
-                synchronized (this) {
-                    if (callTarget != null) {
-                        return callTarget;
-                    }
-                    if (proxy != null) {
-                        this.callTarget = proxy.getCallTarget();
-                        return callTarget;
-                    }
-
-                    /*
-                     * The substitution factory does the validation e.g. some substitutions only
-                     * apply for classes/methods in the boot or platform class loaders. A warning is
-                     * logged is the validation fails.
-                     */
-                    EspressoRootNode redirectedMethod = getSubstitutions().get(getMethod());
-                    if (redirectedMethod != null) {
-                        callTarget = redirectedMethod.getCallTarget();
-                        return callTarget;
-                    }
-
-                    CallTarget target = findCallTarget();
-                    if (target != null) {
-                        callTarget = target;
-                        return callTarget;
-                    }
+            if (CompilerDirectives.injectBranchProbability(CompilerDirectives.SLOWPATH_PROBABILITY, callTarget == null)) {
+                if (CompilerDirectives.isCompilationConstant(this)) {
+                    CompilerDirectives.transferToInterpreterAndInvalidate();
                 }
+                resolveCallTarget();
             }
             return callTarget;
+        }
+
+        @TruffleBoundary
+        private void resolveCallTarget() {
+            Meta meta = getMeta();
+            checkPoisonPill(meta);
+            synchronized (this) {
+                if (callTarget != null) {
+                    return;
+                }
+                if (proxy != null) {
+                    this.callTarget = proxy.getCallTarget();
+                    return;
+                }
+
+                /*
+                 * The substitution factory does the validation e.g. some substitutions only apply
+                 * for classes/methods in the boot or platform class loaders. A warning is logged is
+                 * the validation fails.
+                 */
+                EspressoRootNode redirectedMethod = getSubstitutions().get(getMethod());
+                if (redirectedMethod != null) {
+                    callTarget = redirectedMethod.getCallTarget();
+                    return;
+                }
+
+                CallTarget target = findCallTarget();
+                if (target != null) {
+                    callTarget = target;
+                    return;
+                }
+            }
         }
 
         private CallTarget findCallTarget() {
@@ -1291,7 +1285,7 @@ public final class Method extends Member<Signature> implements TruffleObject, Co
         private void checkPoisonPill(Meta meta) {
             if (poisonPill) {
                 // Conflicting Maximally-specific non-abstract interface methods.
-                if (getJavaVersion().java9OrLater() && getContext().SpecCompliancyMode == EspressoOptions.SpecCompliancyMode.HOTSPOT) {
+                if (getJavaVersion().java9OrLater() && getSpecComplianceMode() == EspressoOptions.SpecComplianceMode.HOTSPOT) {
                     /*
                      * Supposed to be IncompatibleClassChangeError (see jvms-6.5.invokeinterface),
                      * but HotSpot throws AbstractMethodError.
@@ -1331,7 +1325,7 @@ public final class Method extends Member<Signature> implements TruffleObject, Co
 
         @Override
         public String getSourceFile() {
-            return getMethod().getSourceFile();
+            return getDeclaringKlass().getSourceFile();
         }
 
         @Override
@@ -1549,7 +1543,7 @@ public final class Method extends Member<Signature> implements TruffleObject, Co
             return klassVersion;
         }
 
-        public Klass getDeclaringKlass() {
+        public ObjectKlass getDeclaringKlass() {
             return declaringKlass;
         }
 

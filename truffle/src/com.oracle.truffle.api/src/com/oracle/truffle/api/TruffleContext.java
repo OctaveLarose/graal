@@ -88,7 +88,7 @@ public final class TruffleContext implements AutoCloseable {
     static {
         boolean assertions = false;
         assert (assertions = true) == true;
-        CONTEXT_ASSERT_STACK = assertions ? new ThreadLocal<List<Object>>() {
+        CONTEXT_ASSERT_STACK = assertions ? new ThreadLocal<>() {
             @Override
             protected List<Object> initialValue() {
                 return new ArrayList<>();
@@ -149,15 +149,6 @@ public final class TruffleContext implements AutoCloseable {
         } catch (Throwable t) {
             throw Env.engineToLanguageException(t);
         }
-    }
-
-    /**
-     * @since 0.27
-     * @deprecated use {@link #enter(Node)} instead and pass in the node context is possible.
-     */
-    @Deprecated(since = "20.3")
-    public Object enter() {
-        return enter(null);
     }
 
     /**
@@ -389,16 +380,6 @@ public final class TruffleContext implements AutoCloseable {
     }
 
     /**
-     * @since 0.27
-     * @deprecated use {@link #leave(Node, Object)} instead and pass in the node context if
-     *             possible.
-     */
-    @Deprecated(since = "20.3")
-    public void leave(Object prev) {
-        leave(null, prev);
-    }
-
-    /**
      * Leaves this context and sets the previous context as the new current context.
      * <p>
      * An adopted node may be passed to allow perform optimizations on the fast-path. If a
@@ -584,7 +565,9 @@ public final class TruffleContext implements AutoCloseable {
      * <p>
      * In case the context is in one of the following states
      * <ul>
-     * <li>the context is being closed
+     * <li>the context is being closed and the finalization stage has already begun
+     * ({@link TruffleLanguage#finalizeContext(Object)} is being executed for all language
+     * contexts).
      * <li>the context is already closed
      * <li>the context threads are being unwound as a part of the cancelling process
      * <li>the context threads are being unwound as a part of the hard exit process that comes after
@@ -687,7 +670,7 @@ public final class TruffleContext implements AutoCloseable {
          * about to reach the outer context, or when some operation on the new context is attempted
          * while the context is already cancelled. However, the runnable will only be executed if
          * the outer context is not cancelled.
-         * 
+         *
          * The purpose of the runnable is to allow throwing a custom guest exception before the
          * cancel exception reaches the outer context, so that the outer context can properly handle
          * the exception. In case the runnable does not throw any exception, an internal error is
@@ -732,7 +715,7 @@ public final class TruffleContext implements AutoCloseable {
          * close exception reaches the outer context, so that the outer context can properly handle
          * the exception. In case the runnable does not throw any exception, an internal error is
          * thrown (should not be caught).
-         * 
+         *
          * @since 22.1
          */
         public Builder onClosed(Runnable r) {

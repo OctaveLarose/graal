@@ -40,6 +40,8 @@
  */
 package com.oracle.truffle.api.impl;
 
+import static org.graalvm.polyglot.impl.AbstractPolyglotImpl.AbstractHostLanguageService;
+
 import java.io.Closeable;
 import java.io.File;
 import java.io.IOException;
@@ -77,9 +79,9 @@ import org.graalvm.polyglot.Context;
 import org.graalvm.polyglot.Engine;
 import org.graalvm.polyglot.HostAccess.TargetMappingPrecedence;
 import org.graalvm.polyglot.PolyglotException;
+import org.graalvm.polyglot.Value;
 import org.graalvm.polyglot.impl.AbstractPolyglotImpl;
 import org.graalvm.polyglot.impl.AbstractPolyglotImpl.AbstractHostAccess;
-import org.graalvm.polyglot.impl.AbstractPolyglotImpl.AbstractHostService;
 import org.graalvm.polyglot.io.FileSystem;
 import org.graalvm.polyglot.io.MessageTransport;
 import org.graalvm.polyglot.io.ProcessHandler;
@@ -112,6 +114,7 @@ import com.oracle.truffle.api.io.TruffleProcessBuilder;
 import com.oracle.truffle.api.nodes.BlockNode;
 import com.oracle.truffle.api.nodes.BlockNode.ElementExecutor;
 import com.oracle.truffle.api.nodes.BytecodeOSRNode;
+import com.oracle.truffle.api.nodes.EncapsulatingNodeReference;
 import com.oracle.truffle.api.nodes.ExecutableNode;
 import com.oracle.truffle.api.nodes.ExecutionSignature;
 import com.oracle.truffle.api.nodes.LanguageInfo;
@@ -163,11 +166,11 @@ public abstract class Accessor {
 
         public abstract int adoptChildrenAndCount(RootNode rootNode);
 
-        public abstract Object getPolyglotLanguage(LanguageInfo languageInfo);
+        public abstract Object getLanguageCache(LanguageInfo languageInfo);
 
         public abstract TruffleLanguage<?> getLanguage(RootNode languageInfo);
 
-        public abstract LanguageInfo createLanguage(Object polyglotLanguage, String id, String name, String version, String defaultMimeType, Set<String> mimeTypes, boolean internal,
+        public abstract LanguageInfo createLanguage(Object cache, String id, String name, String version, String defaultMimeType, Set<String> mimeTypes, boolean internal,
                         boolean interactive);
 
         public abstract Object getSharingLayer(RootNode rootNode);
@@ -195,6 +198,8 @@ public abstract class Accessor {
         public abstract boolean countsTowardsStackTraceLimit(RootNode rootNode);
 
         public abstract CallTarget getCallTargetWithoutInitialization(RootNode root);
+
+        public abstract EncapsulatingNodeReference createEncapsulatingNodeReference(Thread thread);
     }
 
     public abstract static class SourceSupport extends Support {
@@ -223,6 +228,8 @@ public abstract class Accessor {
         public abstract void mergeLoadedSources(Source[] sources);
 
         public abstract void setEmbedderSource(SourceBuilder builder, boolean b);
+
+        public abstract void setPath(SourceBuilder builder, String path);
     }
 
     public abstract static class InteropSupport extends Support {
@@ -389,9 +396,25 @@ public abstract class Accessor {
 
         public abstract void leaveInternalContext(Node node, Object polyglotContext, Object prev);
 
+        public abstract Object[] enterContextAsPolyglotThread(Object polyglotContext);
+
+        public abstract void leaveContextAsPolyglotThread(Object polyglotContext, Object[] prev);
+
+        public abstract Object enterIfNeeded(Object polyglotContext);
+
+        public abstract void leaveIfNeeded(Object polyglotContext, Object prev);
+
         public abstract Object evalInternalContext(Node node, Object polyglotContext, Source source, boolean allowInternal);
 
+        public abstract void clearExplicitContextStack(Object polyglotContext);
+
+        public abstract void initiateCancelOrExit(Object polyglotContext, boolean exit, int exitCode, boolean resourceLimit, String message);
+
         public abstract void closeContext(Object polyglotContext, boolean force, Node closeLocation, boolean resourceExhaused, String resourceExhausedReason);
+
+        public abstract void closeContext(Object polyglotContext, boolean force, boolean resourceExhaused, String resourceExhausedReason);
+
+        public abstract void closeEngine(Object polyglotEngine, boolean force);
 
         public abstract void exitContext(Object polyglotContext, Node exitLocation, int exitCode);
 
@@ -445,7 +468,7 @@ public abstract class Accessor {
 
         public abstract boolean isInternal(TruffleFile file);
 
-        public abstract String getLanguageHome(Object engineObject);
+        public abstract String getLanguageHome(LanguageInfo languageInfo);
 
         public abstract void addToHostClassPath(Object polyglotLanguageContext, TruffleFile entries);
 
@@ -483,9 +506,9 @@ public abstract class Accessor {
 
         public abstract <S> S lookupService(Object polyglotLanguageContext, LanguageInfo language, LanguageInfo accessingLanguage, Class<S> type);
 
-        public abstract <T extends TruffleLanguage<C>, C> ContextReference<C> createContextReference(Node node, Class<T> languageClass);
+        public abstract <T extends TruffleLanguage<C>, C> ContextReference<C> createContextReference(Class<T> languageClass);
 
-        public abstract <T extends TruffleLanguage<?>> LanguageReference<T> createLanguageReference(Node node, Class<T> targetLanguageClass);
+        public abstract <T extends TruffleLanguage<?>> LanguageReference<T> createLanguageReference(Class<T> targetLanguageClass);
 
         public abstract FileSystem getFileSystem(Object polyglotContext);
 
@@ -497,7 +520,7 @@ public abstract class Accessor {
 
         public abstract TruffleFile getTruffleFile(URI uri);
 
-        public abstract int getAsynchronousStackDepth(Object polylgotLanguage);
+        public abstract int getAsynchronousStackDepth(Object polylgotLanguageInstance);
 
         public abstract void setAsynchronousStackDepth(Object polyglotInstrument, int depth);
 
@@ -513,6 +536,8 @@ public abstract class Accessor {
         public abstract ProcessHandler.Redirect createRedirectToOutputStream(Object polyglotLanguageContext, OutputStream stream);
 
         public abstract boolean isIOAllowed();
+
+        public abstract boolean isCreateProcessAllowed();
 
         public abstract ZoneId getTimeZone(Object polyglotLanguageContext);
 
@@ -624,6 +649,8 @@ public abstract class Accessor {
 
         public abstract Object getHostContext(Object valueContext);
 
+        public abstract Value asValue(Object polyglotContextImpl, Object guestValue);
+
         public abstract Object enterLanguageFromRuntime(TruffleLanguage<?> language);
 
         public abstract void leaveLanguageFromRuntime(TruffleLanguage<?> language, Object prev);
@@ -662,7 +689,7 @@ public abstract class Accessor {
 
         public abstract Map<String, String> readOptionsFromSystemProperties(Map<String, String> options);
 
-        public abstract AbstractHostService getHostService(Object polyglotEngineImpl);
+        public abstract AbstractHostLanguageService getHostService(Object polyglotEngineImpl);
 
         public abstract Handler getEngineLogHandler(Object polyglotEngineImpl);
 
@@ -689,6 +716,8 @@ public abstract class Accessor {
         public abstract Engine getPolyglotEngineAPI(Object polyglotEngineImpl);
 
         public abstract Context getPolyglotContextAPI(Object polyglotContextImpl);
+
+        public abstract EncapsulatingNodeReference getEncapsulatingNodeReference(boolean invalidateOnNull);
     }
 
     public abstract static class LanguageSupport extends Support {
@@ -846,7 +875,7 @@ public abstract class Accessor {
         public abstract Object createInstrumentationHandler(Object polyglotEngine, DispatchOutputStream out, DispatchOutputStream err, InputStream in, MessageTransport messageInterceptor,
                         boolean strongReferences);
 
-        public abstract void collectEnvServices(Set<Object> collectTo, Object polyglotLanguage, TruffleLanguage<?> language);
+        public abstract void collectEnvServices(Set<Object> collectTo, Object polyglotLanguageContext, TruffleLanguage<?> language);
 
         public abstract void onFirstExecution(RootNode rootNode, boolean validate);
 
@@ -943,6 +972,10 @@ public abstract class Accessor {
         public abstract void markMaterializeCalled(FrameDescriptor descriptor);
 
         public abstract boolean getMaterializeCalled(FrameDescriptor descriptor);
+
+        public abstract boolean usesAllStaticMode(FrameDescriptor descriptor);
+
+        public abstract boolean usesMixedStaticMode(FrameDescriptor descriptor);
     }
 
     public abstract static class ExceptionSupport extends Support {
@@ -1065,6 +1098,13 @@ public abstract class Accessor {
         public abstract void onOSRNodeReplaced(BytecodeOSRNode osrNode, Node oldNode, Node newNode, CharSequence reason);
 
         /**
+         * Same as {@link #transferOSRFrame(BytecodeOSRNode, Frame, Frame, int, Object)}, but
+         * fetches the target metadata.
+         */
+        // Support for deprecated frame transfer: GR-38296
+        public abstract void transferOSRFrame(BytecodeOSRNode osrNode, Frame source, Frame target, int bytecodeTarget);
+
+        /**
          * Transfers state from the {@code source} frame into the {@code target} frame. This method
          * should only be used inside OSR code. The frames must have the same layout as the frame
          * passed when executing the {@code osrNode}.
@@ -1072,8 +1112,20 @@ public abstract class Accessor {
          * @param osrNode the node being on-stack replaced.
          * @param source the frame to transfer state from
          * @param target the frame to transfer state into
+         * @param bytecodeTarget the target location OSR executes from (e.g., bytecode index).
          */
-        public abstract void transferOSRFrame(BytecodeOSRNode osrNode, Frame source, Frame target);
+        public abstract void transferOSRFrame(BytecodeOSRNode osrNode, Frame source, Frame target, int bytecodeTarget, Object targetMetadata);
+
+        /**
+         * Restores state from the {@code source} frame into the {@code target} frame. This method
+         * should only be used inside OSR code. The frames must have the same layout as the frame
+         * passed when executing the {@code osrNode}.
+         *
+         * @param osrNode the node being on-stack replaced.
+         * @param source the frame to transfer state from
+         * @param target the frame to transfer state into
+         */
+        public abstract void restoreOSRFrame(BytecodeOSRNode osrNode, Frame source, Frame target);
 
         /**
          * Returns the compiler options specified available from the runtime.

@@ -24,6 +24,8 @@
  */
 package com.oracle.svm.hosted;
 
+import static com.oracle.svm.hosted.ProgressReporterJsonHelper.UNAVAILABLE_METRIC;
+
 import java.io.File;
 import java.io.PrintWriter;
 import java.lang.management.GarbageCollectorMXBean;
@@ -39,21 +41,27 @@ import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 import java.util.Map.Entry;
+import java.util.TreeMap;
+import java.util.TreeSet;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Consumer;
+import java.util.stream.Collectors;
 
+import org.graalvm.collections.EconomicMap;
+import org.graalvm.collections.Pair;
 import org.graalvm.compiler.debug.DebugOptions;
 import org.graalvm.compiler.options.OptionValues;
 import org.graalvm.compiler.serviceprovider.GraalServices;
 import org.graalvm.nativeimage.ImageSingletons;
 import org.graalvm.nativeimage.hosted.Feature;
 import org.graalvm.nativeimage.impl.ImageSingletonsSupport;
-import org.graalvm.nativeimage.impl.RuntimeReflectionSupport;
 
 import com.oracle.graal.pointsto.BigBang;
+import com.oracle.graal.pointsto.api.PointstoOptions;
 import com.oracle.graal.pointsto.meta.AnalysisField;
 import com.oracle.graal.pointsto.meta.AnalysisMethod;
 import com.oracle.graal.pointsto.meta.AnalysisUniverse;
@@ -68,21 +76,30 @@ import com.oracle.svm.core.VM;
 import com.oracle.svm.core.annotate.AutomaticFeature;
 import com.oracle.svm.core.code.CodeInfoTable;
 import com.oracle.svm.core.heap.Heap;
+import com.oracle.svm.core.jdk.Resources;
+import com.oracle.svm.core.jdk.resources.ResourceStorageEntry;
 import com.oracle.svm.core.option.HostedOptionValues;
 import com.oracle.svm.core.reflect.ReflectionMetadataDecoder;
 import com.oracle.svm.core.util.VMError;
+import com.oracle.svm.hosted.ProgressReporterJsonHelper.AnalysisResults;
+import com.oracle.svm.hosted.ProgressReporterJsonHelper.GeneralInfo;
+import com.oracle.svm.hosted.ProgressReporterJsonHelper.ImageDetailKey;
+import com.oracle.svm.hosted.ProgressReporterJsonHelper.JsonMetric;
+import com.oracle.svm.hosted.ProgressReporterJsonHelper.ResourceUsageKey;
 import com.oracle.svm.hosted.c.codegen.CCompilerInvoker;
 import com.oracle.svm.hosted.code.CompileQueue.CompileTask;
 import com.oracle.svm.hosted.image.AbstractImage.NativeImageKind;
 import com.oracle.svm.hosted.image.NativeImageHeap.ObjectInfo;
+import com.oracle.svm.hosted.reflect.ReflectionHostedSupport;
 import com.oracle.svm.util.ImageBuildStatistics;
 import com.oracle.svm.util.ReflectionUtil;
 
 public class ProgressReporter {
     private static final int CHARACTERS_PER_LINE;
+    private static final String HEADLINE_SEPARATOR;
+    private static final String LINE_SEPARATOR;
     private static final boolean IS_CI = System.console() == null || System.getenv("CI") != null;
     private static final boolean IS_DUMB_TERM = isDumbTerm();
-    private static final int MAX_NUM_FEATURES = 50;
     private static final int MAX_NUM_BREAKDOWN = 10;
     private static final String CODE_BREAKDOWN_TITLE = String.format("Top %d packages in code area:", MAX_NUM_BREAKDOWN);
     private static final String HEAP_BREAKDOWN_TITLE = String.format("Top %d object types in image heap:", MAX_NUM_BREAKDOWN);
@@ -93,19 +110,21 @@ public class ProgressReporter {
 
     private final NativeImageSystemIOWrappers builderIO;
 
-    private final boolean isEnabled; // TODO: clean up when deprecating old output (GR-35721).
+    private final ProgressReporterJsonHelper jsonHelper;
     private final DirectPrinter linePrinter = new DirectPrinter();
     private final StagePrinter<?> stagePrinter;
     private final ColorStrategy colorStrategy;
     private final LinkStrategy linkStrategy;
     private final boolean usePrefix;
     private final ScheduledExecutorService executor = Executors.newSingleThreadScheduledExecutor();
+    private final Map<String, Long> codeBreakdown = new HashMap<>();
+    private final Map<String, Long> heapBreakdown = new HashMap<>();
 
     private String outputPrefix = "";
     private long lastGCCheckTimeMillis = System.currentTimeMillis();
     private GCStats lastGCStats = GCStats.getCurrent();
     private long numRuntimeCompiledMethods = -1;
-    private long graphEncodingByteLength = 0;
+    private long graphEncodingByteLength = -1;
     private int numJNIClasses = -1;
     private int numJNIFields = -1;
     private int numJNIMethods = -1;
@@ -141,6 +160,8 @@ public class ProgressReporter {
 
     static {
         CHARACTERS_PER_LINE = IS_CI ? ProgressReporterCHelper.MAX_CHARACTERS_PER_LINE : ProgressReporterCHelper.getTerminalWindowColumnsClamped();
+        HEADLINE_SEPARATOR = Utils.stringFilledWith(CHARACTERS_PER_LINE, "=");
+        LINE_SEPARATOR = Utils.stringFilledWith(CHARACTERS_PER_LINE, "-");
     }
 
     private static boolean isDumbTerm() {
@@ -155,9 +176,10 @@ public class ProgressReporter {
     public ProgressReporter(OptionValues options) {
         builderIO = NativeImageSystemIOWrappers.singleton();
 
-        isEnabled = SubstrateOptions.BuildOutputUseNewStyle.getValue(options);
-        if (isEnabled) {
-            Timer.disablePrinting();
+        if (SubstrateOptions.BuildOutputJSONFile.hasBeenSet(options)) {
+            jsonHelper = new ProgressReporterJsonHelper(SubstrateOptions.BuildOutputJSONFile.getValue(options));
+        } else {
+            jsonHelper = null;
         }
         usePrefix = SubstrateOptions.BuildOutputPrefix.getValue(options);
         boolean enableColors = !IS_DUMB_TERM && !IS_CI && OS.getCurrent() != OS.WINDOWS &&
@@ -197,6 +219,9 @@ public class ProgressReporter {
             l().redBold().a("You enabled -Ob for this image build. This will configure some optimizations to reduce image build time.").println();
             l().redBold().a("This feature should only be used during development and never for deployment.").reset().println();
         }
+        if (PointstoOptions.UseExperimentalReachabilityAnalysis.getValue(options)) {
+            l().redBold().a("This build uses the experimental reachability analysis rather than the default points-to analysis.").reset().println();
+        }
     }
 
     public void setNumRuntimeCompiledMethods(int value) {
@@ -224,6 +249,7 @@ public class ProgressReporter {
             stagePrinter.progressBarStart += outputPrefix.length();
         }
         l().printHeadlineSeparator();
+        recordJsonMetric(GeneralInfo.IMAGE_NAME, imageName);
         String imageKindName = imageKind.name().toLowerCase().replace('_', ' ');
         l().blueBold().link("GraalVM Native Image", "https://www.graalvm.org/native-image/").reset()
                         .a(": Generating '").bold().a(imageName).reset().a("' (").doclink(imageKindName, "#glossary-imagekind").a(")...").println();
@@ -237,45 +263,55 @@ public class ProgressReporter {
         }
     }
 
-    public void printInitializeEnd(Collection<String> libraries) {
+    public void printInitializeEnd() {
         stagePrinter.end(getTimer(TimerCollection.Registry.CLASSLIST).getTotalTime() + getTimer(TimerCollection.Registry.SETUP).getTotalTime());
-        l().a(" ").doclink("Version info", "#glossary-version-info").a(": '").a(ImageSingletons.lookup(VM.class).version).a("'").println();
+        String version = ImageSingletons.lookup(VM.class).version;
+        recordJsonMetric(GeneralInfo.GRAALVM_VERSION, version);
+        l().a(" ").doclink("Version info", "#glossary-version-info").a(": '").a(version).a("'").println();
+        String javaVersion = System.getProperty("java.runtime.version");
+        recordJsonMetric(GeneralInfo.JAVA_VERSION, javaVersion);
+        if (javaVersion != null) {
+            l().a(" ").doclink("Java version info", "#glossary-java-version-info").a(": '").a(javaVersion).a("'").println();
+        }
+        String cCompilerShort = null;
         if (ImageSingletons.contains(CCompilerInvoker.class)) {
-            l().a(" ").doclink("C compiler", "#glossary-ccompiler").a(": ").a(ImageSingletons.lookup(CCompilerInvoker.class).compilerInfo.getShortDescription()).println();
+            cCompilerShort = ImageSingletons.lookup(CCompilerInvoker.class).compilerInfo.getShortDescription();
+            l().a(" ").doclink("C compiler", "#glossary-ccompiler").a(": ").a(cCompilerShort).println();
         }
-        l().a(" ").doclink("Garbage collector", "#glossary-gc").a(": ").a(Heap.getHeap().getGC().getName()).println();
-        printNativeLibraries(libraries);
+        recordJsonMetric(GeneralInfo.CC, cCompilerShort);
+        String gcName = Heap.getHeap().getGC().getName();
+        recordJsonMetric(GeneralInfo.GC, gcName);
+        l().a(" ").doclink("Garbage collector", "#glossary-gc").a(": ").a(gcName).println();
     }
 
-    private void printNativeLibraries(Collection<String> libraries) {
-        int numLibraries = libraries.size();
-        if (numLibraries > 0) {
-            if (numLibraries == 1) {
-                l().a(" 1 native library: ").a(libraries.iterator().next()).println();
-            } else {
-                l().a(" ").a(numLibraries).a(" native libraries: ").a(String.join(", ", libraries)).println();
+    public void printFeatures(List<Feature> features) {
+        int numFeatures = features.size();
+        if (numFeatures > 0) {
+            l().a(" ").a(numFeatures).a(" ").doclink("user-specific feature(s)", "#glossary-user-specific-features").println();
+            features.sort((a, b) -> a.getClass().getName().compareTo(b.getClass().getName()));
+            for (Feature feature : features) {
+                printFeature(l(), feature);
             }
         }
     }
 
-    public void printFeatures(List<String> list) {
-        int numUserFeatures = list.size();
-        if (numUserFeatures > 0) {
-            l().a(" ").a(numUserFeatures).a(" ").doclink("user-provided feature(s)", "#glossary-user-provided-features").println();
-            if (numUserFeatures <= MAX_NUM_FEATURES) {
-                for (String name : list) {
-                    l().a("  - ").a(name).println();
-                }
-            } else {
-                for (int i = 0; i < MAX_NUM_FEATURES; i++) {
-                    l().a("  - ").a(list.get(i)).println();
-                }
-                l().a("  ... ").a(numUserFeatures - MAX_NUM_FEATURES).a(" more").println();
-            }
+    private static void printFeature(DirectPrinter printer, Feature feature) {
+        printer.a(" - ");
+        String name = feature.getClass().getName();
+        String url = feature.getURL();
+        if (url != null) {
+            printer.link(name, url);
+        } else {
+            printer.a(name);
         }
+        String description = feature.getDescription();
+        if (description != null) {
+            printer.a(": ").a(description);
+        }
+        printer.println();
     }
 
-    public ReporterClosable printAnalysis(BigBang bb) {
+    public ReporterClosable printAnalysis(AnalysisUniverse universe, Collection<String> libraries) {
         Timer timer = getTimer(TimerCollection.Registry.ANALYSIS);
         timer.start();
         stagePrinter.start(BuildStage.ANALYSIS);
@@ -284,38 +320,59 @@ public class ProgressReporter {
             public void closeAction() {
                 timer.stop();
                 stagePrinter.end(timer);
-                printAnalysisStatistics(bb.getUniverse());
+                printAnalysisStatistics(universe, libraries);
             }
         };
     }
 
-    private void printAnalysisStatistics(AnalysisUniverse universe) {
+    private void printAnalysisStatistics(AnalysisUniverse universe, Collection<String> libraries) {
         String actualVsTotalFormat = "%,8d (%5.2f%%) of %,6d";
         long reachableClasses = universe.getTypes().stream().filter(t -> t.isReachable()).count();
         long totalClasses = universe.getTypes().size();
+        recordJsonMetric(AnalysisResults.CLASS_TOTAL, totalClasses);
+        recordJsonMetric(AnalysisResults.CLASS_REACHABLE, reachableClasses);
         l().a(actualVsTotalFormat, reachableClasses, reachableClasses / (double) totalClasses * 100, totalClasses)
                         .a(" classes ").doclink("reachable", "#glossary-reachability").println();
         Collection<AnalysisField> fields = universe.getFields();
         long reachableFields = fields.stream().filter(f -> f.isAccessed()).count();
         int totalFields = fields.size();
+        recordJsonMetric(AnalysisResults.FIELD_TOTAL, totalFields);
+        recordJsonMetric(AnalysisResults.FIELD_REACHABLE, reachableFields);
         l().a(actualVsTotalFormat, reachableFields, reachableFields / (double) totalFields * 100, totalFields)
                         .a(" fields ").doclink("reachable", "#glossary-reachability").println();
         Collection<AnalysisMethod> methods = universe.getMethods();
         long reachableMethods = methods.stream().filter(m -> m.isReachable()).count();
         int totalMethods = methods.size();
+        recordJsonMetric(AnalysisResults.METHOD_TOTAL, totalMethods);
+        recordJsonMetric(AnalysisResults.METHOD_REACHABLE, reachableMethods);
         l().a(actualVsTotalFormat, reachableMethods, reachableMethods / (double) totalMethods * 100, totalMethods)
                         .a(" methods ").doclink("reachable", "#glossary-reachability").println();
         if (numRuntimeCompiledMethods >= 0) {
+            recordJsonMetric(ImageDetailKey.RUNTIME_COMPILED_METHODS_COUNT, numRuntimeCompiledMethods);
             l().a(actualVsTotalFormat, numRuntimeCompiledMethods, numRuntimeCompiledMethods / (double) totalMethods * 100, totalMethods)
                             .a(" methods included for ").doclink("runtime compilation", "#glossary-runtime-methods").println();
         }
         String classesFieldsMethodFormat = "%,8d classes, %,5d fields, and %,5d methods ";
-        RuntimeReflectionSupport rs = ImageSingletons.lookup(RuntimeReflectionSupport.class);
-        l().a(classesFieldsMethodFormat, rs.getReflectionClassesCount(), rs.getReflectionFieldsCount(), rs.getReflectionMethodsCount())
+        ReflectionHostedSupport rs = ImageSingletons.lookup(ReflectionHostedSupport.class);
+        int reflectClassesCount = rs.getReflectionClassesCount();
+        int reflectFieldsCount = rs.getReflectionFieldsCount();
+        int reflectMethodsCount = rs.getReflectionMethodsCount();
+        recordJsonMetric(AnalysisResults.METHOD_REFLECT, reflectMethodsCount);
+        recordJsonMetric(AnalysisResults.CLASS_REFLECT, reflectClassesCount);
+        recordJsonMetric(AnalysisResults.FIELD_REFLECT, reflectFieldsCount);
+        l().a(classesFieldsMethodFormat, reflectClassesCount, reflectFieldsCount, reflectMethodsCount)
                         .doclink("registered for reflection", "#glossary-reflection-registrations").println();
-        if (numJNIClasses > 0) {
+        recordJsonMetric(AnalysisResults.METHOD_JNI, (numJNIMethods >= 0 ? numJNIMethods : UNAVAILABLE_METRIC));
+        recordJsonMetric(AnalysisResults.CLASS_JNI, (numJNIClasses >= 0 ? numJNIClasses : UNAVAILABLE_METRIC));
+        recordJsonMetric(AnalysisResults.FIELD_JNI, (numJNIFields >= 0 ? numJNIFields : UNAVAILABLE_METRIC));
+        if (numJNIClasses >= 0) {
             l().a(classesFieldsMethodFormat, numJNIClasses, numJNIFields, numJNIMethods)
                             .doclink("registered for JNI access", "#glossary-jni-access-registrations").println();
+        }
+        int numLibraries = libraries.size();
+        if (numLibraries > 0) {
+            TreeSet<String> sortedLibraries = new TreeSet<>(libraries);
+            l().a("%,8d native %s: ", numLibraries, numLibraries == 1 ? "library" : "libraries").a(String.join(", ", sortedLibraries)).println();
         }
     }
 
@@ -380,19 +437,22 @@ public class ProgressReporter {
         this.debugInfoTimer = timer;
     }
 
-    public void printCreationEnd(int imageSize, AnalysisUniverse universe, int numHeapObjects, long imageHeapSize, int codeCacheSize,
+    public void printCreationEnd(int imageSize, int numHeapObjects, long imageHeapSize, int codeAreaSize,
                     int numCompilations, int debugInfoSize) {
         Timer imageTimer = getTimer(TimerCollection.Registry.IMAGE);
         Timer writeTimer = getTimer(TimerCollection.Registry.WRITE);
         stagePrinter.end(imageTimer.getTotalTime() + writeTimer.getTotalTime());
         creationStageEndCompleted = true;
         String format = "%9s (%5.2f%%) for ";
-        l().a(format, Utils.bytesToHuman(codeCacheSize), codeCacheSize / (double) imageSize * 100)
-                        .doclink("code area", "#glossary-code-area").a(":%,9d compilation units", numCompilations).println();
-        long numInstantiatedClasses = universe.getTypes().stream().filter(t -> t.isInstantiated()).count();
+        l().a(format, Utils.bytesToHuman(codeAreaSize), codeAreaSize / (double) imageSize * 100)
+                        .doclink("code area", "#glossary-code-area").a(":%,10d compilation units", numCompilations).println();
+        EconomicMap<Pair<String, String>, ResourceStorageEntry> resources = Resources.singleton().resources();
+        int numResources = resources.size();
+        recordJsonMetric(ImageDetailKey.IMAGE_HEAP_RESOURCE_COUNT, numResources);
         l().a(format, Utils.bytesToHuman(imageHeapSize), imageHeapSize / (double) imageSize * 100)
-                        .doclink("image heap", "#glossary-image-heap").a(":%,8d classes and %,d objects", numInstantiatedClasses, numHeapObjects).println();
+                        .doclink("image heap", "#glossary-image-heap").a(":%,9d objects and %,d resources", numHeapObjects, numResources).println();
         if (debugInfoSize > 0) {
+            recordJsonMetric(ImageDetailKey.DEBUG_INFO_SIZE, debugInfoSize); // Optional metric
             DirectPrinter l = l().a(format, Utils.bytesToHuman(debugInfoSize), debugInfoSize / (double) imageSize * 100)
                             .doclink("debug info", "#glossary-debug-info");
             if (debugInfoTimer != null) {
@@ -400,10 +460,15 @@ public class ProgressReporter {
             }
             l.println();
         }
-        long otherBytes = imageSize - codeCacheSize - imageHeapSize - debugInfoSize;
+        long otherBytes = imageSize - codeAreaSize - imageHeapSize - debugInfoSize;
+        recordJsonMetric(ImageDetailKey.IMAGE_HEAP_SIZE, imageHeapSize);
+        recordJsonMetric(ImageDetailKey.TOTAL_SIZE, imageSize);
+        recordJsonMetric(ImageDetailKey.CODE_AREA_SIZE, codeAreaSize);
+        recordJsonMetric(ImageDetailKey.NUM_COMP_UNITS, numCompilations);
         l().a(format, Utils.bytesToHuman(otherBytes), otherBytes / (double) imageSize * 100)
                         .doclink("other data", "#glossary-other-data").println();
         l().a("%9s in total", Utils.bytesToHuman(imageSize)).println();
+        printBreakdowns();
     }
 
     public void ensureCreationStageEndCompleted() {
@@ -412,12 +477,78 @@ public class ProgressReporter {
         }
     }
 
-    public void printBreakdowns(Collection<CompileTask> compilationTasks, Collection<ObjectInfo> heapObjects) {
-        Map<String, Long> codeBreakdown = calculateCodeBreakdown(compilationTasks);
-        Map<String, Long> heapBreakdown = calculateHeapBreakdown(heapObjects);
+    public void createBreakdowns(Collection<CompileTask> compilationTasks, Collection<ObjectInfo> heapObjects) {
+        if (!SubstrateOptions.BuildOutputBreakdowns.getValue()) {
+            return;
+        }
+        calculateCodeBreakdown(compilationTasks);
+        calculateHeapBreakdown(heapObjects);
+    }
+
+    private void calculateCodeBreakdown(Collection<CompileTask> compilationTasks) {
+        for (CompileTask task : compilationTasks) {
+            String classOrPackageName = task.method.format("%H");
+            int lastDotIndex = classOrPackageName.lastIndexOf('.');
+            if (lastDotIndex > 0) {
+                classOrPackageName = classOrPackageName.substring(0, lastDotIndex);
+            }
+            codeBreakdown.merge(classOrPackageName, (long) task.result.getTargetCodeSize(), Long::sum);
+        }
+    }
+
+    private void calculateHeapBreakdown(Collection<ObjectInfo> heapObjects) {
+        long stringByteLength = 0;
+        for (ObjectInfo o : heapObjects) {
+            heapBreakdown.merge(o.getClazz().toJavaName(true), o.getSize(), Long::sum);
+            Object javaObject = o.getObject();
+            if (reportStringBytes && javaObject instanceof String) {
+                stringByteLength += Utils.getInternalByteArrayLength((String) javaObject);
+            }
+        }
+
+        Long byteArraySize = heapBreakdown.remove("byte[]");
+        if (byteArraySize != null) {
+            long remainingBytes = byteArraySize;
+            if (stringByteLength > 0) {
+                heapBreakdown.put(BREAKDOWN_BYTE_ARRAY_PREFIX + "java.lang.String", stringByteLength);
+                remainingBytes -= stringByteLength;
+            }
+            long codeInfoSize = CodeInfoTable.getImageCodeCache().getTotalByteArraySize();
+            if (codeInfoSize > 0) {
+                heapBreakdown.put(BREAKDOWN_BYTE_ARRAY_PREFIX + linkStrategy.asDocLink("code metadata", "#glossary-code-metadata"), codeInfoSize);
+                remainingBytes -= codeInfoSize;
+            }
+            long metadataByteLength = ImageSingletons.lookup(ReflectionMetadataDecoder.class).getMetadataByteLength();
+            if (metadataByteLength > 0) {
+                heapBreakdown.put(BREAKDOWN_BYTE_ARRAY_PREFIX + linkStrategy.asDocLink("reflection metadata", "#glossary-reflection-metadata"), metadataByteLength);
+                remainingBytes -= metadataByteLength;
+            }
+            long resourcesByteLength = 0;
+            for (ResourceStorageEntry resourceList : Resources.singleton().resources().getValues()) {
+                for (byte[] resource : resourceList.getData()) {
+                    resourcesByteLength += resource.length;
+                }
+            }
+            recordJsonMetric(ImageDetailKey.RESOURCE_SIZE_BYTES, resourcesByteLength);
+            if (resourcesByteLength > 0) {
+                heapBreakdown.put(BREAKDOWN_BYTE_ARRAY_PREFIX + linkStrategy.asDocLink("embedded resources", "#glossary-embedded-resources"), resourcesByteLength);
+                remainingBytes -= resourcesByteLength;
+            }
+            if (graphEncodingByteLength >= 0) {
+                recordJsonMetric(ImageDetailKey.GRAPH_ENCODING_SIZE, graphEncodingByteLength);
+                heapBreakdown.put(BREAKDOWN_BYTE_ARRAY_PREFIX + linkStrategy.asDocLink("graph encodings", "#glossary-graph-encodings"), graphEncodingByteLength);
+                remainingBytes -= graphEncodingByteLength;
+            }
+            assert remainingBytes >= 0;
+            heapBreakdown.put(BREAKDOWN_BYTE_ARRAY_PREFIX + linkStrategy.asDocLink("general heap data", "#glossary-general-heap-data"), remainingBytes);
+        }
+    }
+
+    private void printBreakdowns() {
+        if (!SubstrateOptions.BuildOutputBreakdowns.getValue()) {
+            return;
+        }
         l().printLineSeparator();
-        int numCodeBreakdownItems = codeBreakdown.size();
-        int numHeapBreakdownItems = heapBreakdown.size();
         Iterator<Entry<String, Long>> packagesBySize = codeBreakdown.entrySet().stream()
                         .sorted(Entry.comparingByValue(Comparator.reverseOrder())).iterator();
         Iterator<Entry<String, Long>> typesBySizeInHeap = heapBreakdown.entrySet().stream()
@@ -426,15 +557,18 @@ public class ProgressReporter {
         final TwoColumnPrinter p = new TwoColumnPrinter();
         p.l().yellowBold().a(CODE_BREAKDOWN_TITLE).jumpToMiddle().a(HEAP_BREAKDOWN_TITLE).reset().flushln();
 
-        List<Entry<String, Long>> printedCodeSizeEntries = new ArrayList<>();
-        List<Entry<String, Long>> printedHeapSizeEntries = new ArrayList<>();
+        long printedCodeBytes = 0;
+        long printedHeapBytes = 0;
+        long printedCodeItems = 0;
+        long printedHeapItems = 0;
         for (int i = 0; i < MAX_NUM_BREAKDOWN; i++) {
             String codeSizePart = "";
             if (packagesBySize.hasNext()) {
                 Entry<String, Long> e = packagesBySize.next();
                 String className = Utils.truncateClassOrPackageName(e.getKey());
                 codeSizePart = String.format("%9s %s", Utils.bytesToHuman(e.getValue()), className);
-                printedCodeSizeEntries.add(e);
+                printedCodeBytes += e.getValue();
+                printedCodeItems++;
             }
 
             String heapSizePart = "";
@@ -446,7 +580,8 @@ public class ProgressReporter {
                     className = Utils.truncateClassOrPackageName(className);
                 }
                 heapSizePart = String.format("%9s %s", Utils.bytesToHuman(e.getValue()), className);
-                printedHeapSizeEntries.add(e);
+                printedHeapBytes += e.getValue();
+                printedHeapItems++;
             }
             if (codeSizePart.isEmpty() && heapSizePart.isEmpty()) {
                 break;
@@ -454,64 +589,13 @@ public class ProgressReporter {
             p.l().a(codeSizePart).jumpToMiddle().a(heapSizePart).flushln();
         }
 
-        p.l().a("      ... ").a(numCodeBreakdownItems - printedHeapSizeEntries.size()).a(" additional packages")
+        int numCodeItems = codeBreakdown.size();
+        int numHeapItems = heapBreakdown.size();
+        long totalCodeBytes = codeBreakdown.values().stream().collect(Collectors.summingLong(Long::longValue));
+        long totalHeapBytes = heapBreakdown.values().stream().collect(Collectors.summingLong(Long::longValue));
+        p.l().a(String.format("%9s for %s more packages", Utils.bytesToHuman(totalCodeBytes - printedCodeBytes), numCodeItems - printedCodeItems))
                         .jumpToMiddle()
-                        .a("      ... ").a(numHeapBreakdownItems - printedCodeSizeEntries.size()).a(" additional object types").flushln();
-
-        new CenteredTextPrinter().dim()
-                        .a("(use ").link("GraalVM Dashboard", "https://www.graalvm.org/dashboard/?ojr=help%3Btopic%3Dgetting-started.md").a(" to see all)")
-                        .reset().flushln();
-    }
-
-    private static Map<String, Long> calculateCodeBreakdown(Collection<CompileTask> compilationTasks) {
-        Map<String, Long> classNameToCodeSize = new HashMap<>();
-        for (CompileTask task : compilationTasks) {
-            String classOrPackageName = task.method.format("%H");
-            int lastDotIndex = classOrPackageName.lastIndexOf('.');
-            if (lastDotIndex > 0) {
-                classOrPackageName = classOrPackageName.substring(0, lastDotIndex);
-            }
-            classNameToCodeSize.merge(classOrPackageName, (long) task.result.getTargetCodeSize(), Long::sum);
-        }
-        return classNameToCodeSize;
-    }
-
-    private Map<String, Long> calculateHeapBreakdown(Collection<ObjectInfo> heapObjects) {
-        Map<String, Long> classNameToSize = new HashMap<>();
-        long stringByteLength = 0;
-        for (ObjectInfo o : heapObjects) {
-            classNameToSize.merge(o.getClazz().toJavaName(true), o.getSize(), Long::sum);
-            Object javaObject = o.getObject();
-            if (reportStringBytes && javaObject instanceof String) {
-                stringByteLength += Utils.getInternalByteArrayLength((String) javaObject);
-            }
-        }
-
-        Long byteArraySize = classNameToSize.remove("byte[]");
-        if (byteArraySize != null) {
-            long remainingBytes = byteArraySize;
-            if (stringByteLength > 0) {
-                classNameToSize.put(BREAKDOWN_BYTE_ARRAY_PREFIX + "java.lang.String", stringByteLength);
-                remainingBytes -= stringByteLength;
-            }
-            long codeInfoSize = CodeInfoTable.getImageCodeCache().getTotalByteArraySize();
-            if (codeInfoSize > 0) {
-                classNameToSize.put(BREAKDOWN_BYTE_ARRAY_PREFIX + linkStrategy.asDocLink("code metadata", "#glossary-code-metadata"), codeInfoSize);
-                remainingBytes -= codeInfoSize;
-            }
-            long metadataByteLength = ImageSingletons.lookup(ReflectionMetadataDecoder.class).getMetadataByteLength();
-            if (metadataByteLength > 0) {
-                classNameToSize.put(BREAKDOWN_BYTE_ARRAY_PREFIX + linkStrategy.asDocLink("reflection metadata", "#glossary-reflection-metadata"), metadataByteLength);
-                remainingBytes -= metadataByteLength;
-            }
-            if (graphEncodingByteLength > 0) {
-                classNameToSize.put(BREAKDOWN_BYTE_ARRAY_PREFIX + linkStrategy.asDocLink("graph encodings", "#glossary-graph-encodings"), graphEncodingByteLength);
-                remainingBytes -= graphEncodingByteLength;
-            }
-            assert remainingBytes >= 0;
-            classNameToSize.put(BREAKDOWN_BYTE_ARRAY_PREFIX + linkStrategy.asDocLink("general heap data", "#glossary-general-heap-data"), remainingBytes);
-        }
-        return classNameToSize;
+                        .a(String.format("%9s for %s more object types", Utils.bytesToHuman(totalHeapBytes - printedHeapBytes), numHeapItems - printedHeapItems)).flushln();
     }
 
     public void printEpilog(String imageName, NativeImageGenerator generator, boolean wasSuccessfulBuild, OptionValues parsedHostedOptions) {
@@ -521,7 +605,7 @@ public class ProgressReporter {
         Map<ArtifactType, List<Path>> artifacts = generator.getBuildArtifacts();
         if (!artifacts.isEmpty()) {
             l().printLineSeparator();
-            printArtifacts(imageName, generator, parsedHostedOptions, artifacts);
+            printArtifacts(imageName, generator, parsedHostedOptions, artifacts, wasSuccessfulBuild);
         }
 
         l().printHeadlineSeparator();
@@ -538,33 +622,43 @@ public class ProgressReporter {
         executor.shutdown();
     }
 
-    private void printArtifacts(String imageName, NativeImageGenerator generator, OptionValues parsedHostedOptions, Map<ArtifactType, List<Path>> artifacts) {
+    private void printArtifacts(String imageName, NativeImageGenerator generator, OptionValues parsedHostedOptions, Map<ArtifactType, List<Path>> artifacts, boolean wasSuccessfulBuild) {
         l().yellowBold().a("Produced artifacts:").reset().println();
+        // Use TreeMap to sort paths alphabetically.
+        Map<Path, List<String>> pathToTypes = new TreeMap<>();
         artifacts.forEach((artifactType, paths) -> {
-            for (Path p : paths) {
-                l().a(" ").link(p).dim().a(" (").a(artifactType.name().toLowerCase()).a(")").reset().println();
+            for (Path path : paths) {
+                pathToTypes.computeIfAbsent(path, p -> new ArrayList<>()).add(artifactType.name().toLowerCase());
             }
         });
-        if (generator.getBigbang() != null && ImageBuildStatistics.Options.CollectImageBuildStatistics.getValue(parsedHostedOptions)) {
-            l().a(" ").link(reportImageBuildStatistics(imageName, generator.getBigbang())).println();
+        if (jsonHelper != null && wasSuccessfulBuild) {
+            Path jsonMetric = jsonHelper.printToFile();
+            pathToTypes.computeIfAbsent(jsonMetric, p -> new ArrayList<>()).add("json");
         }
-        l().a(" ").link(reportBuildArtifacts(imageName, artifacts)).println();
+        if (generator.getBigbang() != null && ImageBuildStatistics.Options.CollectImageBuildStatistics.getValue(parsedHostedOptions)) {
+            Path buildStatisticsPath = reportImageBuildStatistics(imageName, generator.getBigbang());
+            pathToTypes.computeIfAbsent(buildStatisticsPath, p -> new ArrayList<>()).add("raw");
+        }
+        pathToTypes.computeIfAbsent(reportBuildArtifacts(imageName, artifacts), p -> new ArrayList<>()).add("txt");
+        pathToTypes.forEach((path, typeNames) -> {
+            l().a(" ").link(path).dim().a(" (").a(String.join(", ", typeNames)).a(")").reset().println();
+        });
     }
 
-    private Path reportImageBuildStatistics(String imageName, BigBang bb) {
+    private static Path reportImageBuildStatistics(String imageName, BigBang bb) {
         Consumer<PrintWriter> statsReporter = ImageSingletons.lookup(ImageBuildStatistics.class).getReporter();
         String description = "image build statistics";
         if (ImageBuildStatistics.Options.ImageBuildStatisticsFile.hasBeenSet(bb.getOptions())) {
             final File file = new File(ImageBuildStatistics.Options.ImageBuildStatisticsFile.getValue(bb.getOptions()));
-            return ReportUtils.report(description, file.getAbsoluteFile().toPath(), statsReporter, !isEnabled);
+            return ReportUtils.report(description, file.getAbsoluteFile().toPath(), statsReporter, false);
         } else {
             String name = "image_build_statistics_" + ReportUtils.extractImageName(imageName);
             String path = SubstrateOptions.Path.getValue() + File.separatorChar + "reports";
-            return ReportUtils.report(description, path, name, "json", statsReporter, !isEnabled);
+            return ReportUtils.report(description, path, name, "json", statsReporter, false);
         }
     }
 
-    private Path reportBuildArtifacts(String imageName, Map<ArtifactType, List<Path>> buildArtifacts) {
+    private static Path reportBuildArtifacts(String imageName, Map<ArtifactType, List<Path>> buildArtifacts) {
         Path buildDir = NativeImageGenerator.generatedFiles(HostedOptionValues.singleton());
 
         Consumer<PrintWriter> writerConsumer = writer -> buildArtifacts.forEach((artifactType, paths) -> {
@@ -577,7 +671,7 @@ public class ProgressReporter {
             paths.stream().map(Path::toAbsolutePath).map(buildDir::relativize).forEach(writer::println);
             writer.println();
         });
-        return ReportUtils.report("build artifacts", buildDir.resolve(imageName + ".build_artifacts.txt"), writerConsumer, !isEnabled);
+        return ReportUtils.report("build artifacts", buildDir.resolve(imageName + ".build_artifacts.txt"), writerConsumer, false);
     }
 
     private void printResourceStatistics() {
@@ -585,17 +679,23 @@ public class ProgressReporter {
         GCStats gcStats = GCStats.getCurrent();
         double gcSeconds = Utils.millisToSeconds(gcStats.totalTimeMillis);
         CenteredTextPrinter p = new CenteredTextPrinter();
+        recordJsonMetric(ResourceUsageKey.GC_COUNT, gcStats.totalCount);
+        recordJsonMetric(ResourceUsageKey.GC_SECS, gcSeconds);
         p.a("%.1fs (%.1f%% of total time) in %d ", gcSeconds, gcSeconds / totalProcessTimeSeconds * 100, gcStats.totalCount)
                         .doclink("GCs", "#glossary-garbage-collections");
         long peakRSS = ProgressReporterCHelper.getPeakRSS();
         if (peakRSS >= 0) {
             p.a(" | ").doclink("Peak RSS", "#glossary-peak-rss").a(": ").a("%.2fGB", Utils.bytesToGiB(peakRSS));
         }
+        recordJsonMetric(ResourceUsageKey.PEAK_RSS, (peakRSS >= 0 ? peakRSS : UNAVAILABLE_METRIC));
         OperatingSystemMXBean osMXBean = ManagementFactory.getOperatingSystemMXBean();
         long processCPUTime = ((com.sun.management.OperatingSystemMXBean) osMXBean).getProcessCpuTime();
+        double cpuLoad = UNAVAILABLE_METRIC;
         if (processCPUTime > 0) {
-            p.a(" | ").doclink("CPU load", "#glossary-cpu-load").a(": ").a("%.2f", Utils.nanosToSeconds(processCPUTime) / totalProcessTimeSeconds);
+            cpuLoad = Utils.nanosToSeconds(processCPUTime) / totalProcessTimeSeconds;
+            p.a(" | ").doclink("CPU load", "#glossary-cpu-load").a(": ").a("%.2f", cpuLoad);
         }
+        recordJsonMetric(ResourceUsageKey.CPU_LOAD, cpuLoad);
         p.flushln();
     }
 
@@ -615,6 +715,12 @@ public class ProgressReporter {
             l().a("            to reduce GC overhead and improve image build time.").println();
         }
         lastGCStats = currentGCStats;
+    }
+
+    private void recordJsonMetric(JsonMetric metric, Object value) {
+        if (jsonHelper != null) {
+            metric.record(jsonHelper, value);
+        }
     }
 
     /*
@@ -774,21 +880,15 @@ public class ProgressReporter {
      */
 
     private void print(char text) {
-        if (isEnabled) {
-            builderIO.getOut().print(text);
-        }
+        builderIO.getOut().print(text);
     }
 
     private void print(String text) {
-        if (isEnabled) {
-            builderIO.getOut().print(text);
-        }
+        builderIO.getOut().print(text);
     }
 
     private void println() {
-        if (isEnabled) {
-            builderIO.getOut().println();
-        }
+        builderIO.getOut().println();
     }
 
     /*
@@ -869,9 +969,6 @@ public class ProgressReporter {
     }
 
     final class DirectPrinter extends AbstractPrinter<DirectPrinter> {
-        private final String headlineSeparator = Utils.stringFilledWith(CHARACTERS_PER_LINE, "=");
-        private final String lineSeparator = Utils.stringFilledWith(CHARACTERS_PER_LINE, "-");
-
         @Override
         DirectPrinter getThis() {
             return this;
@@ -888,11 +985,11 @@ public class ProgressReporter {
         }
 
         void printHeadlineSeparator() {
-            dim().a(headlineSeparator).reset().println();
+            dim().a(HEADLINE_SEPARATOR).reset().println();
         }
 
         void printLineSeparator() {
-            dim().a(lineSeparator).reset().println();
+            dim().a(LINE_SEPARATOR).reset().println();
         }
     }
 
@@ -944,6 +1041,7 @@ public class ProgressReporter {
         private BuildStage activeBuildStage = null;
 
         private ScheduledFuture<?> periodicPrintingTask;
+        private AtomicBoolean isCancelled = new AtomicBoolean();
 
         T start(BuildStage stage) {
             assert activeBuildStage == null;
@@ -959,12 +1057,16 @@ public class ProgressReporter {
         }
 
         private void startPeriodicProgress() {
+            isCancelled.set(false);
             periodicPrintingTask = executor.scheduleAtFixedRate(new Runnable() {
                 int countdown;
                 int numPrints;
 
                 @Override
                 public void run() {
+                    if (isCancelled.get()) {
+                        return;
+                    }
                     if (--countdown < 0) {
                         reportProgress();
                         countdown = ++numPrints > 2 ? numPrints * 2 : numPrints;
@@ -1000,6 +1102,7 @@ public class ProgressReporter {
 
         void end(double totalTime) {
             if (activeBuildStage.hasPeriodicProgress) {
+                isCancelled.set(true);
                 periodicPrintingTask.cancel(false);
             }
             if (activeBuildStage.hasProgressBar) {
@@ -1131,7 +1234,7 @@ public class ProgressReporter {
             int remaining = (CHARACTERS_PER_LINE / 2) - getCurrentTextLength();
             assert remaining >= 0 : "Column text too wide";
             a(Utils.stringFilledWith(remaining, " "));
-            assert !isEnabled || getCurrentTextLength() == CHARACTERS_PER_LINE / 2;
+            assert getCurrentTextLength() == CHARACTERS_PER_LINE / 2;
             return this;
         }
 

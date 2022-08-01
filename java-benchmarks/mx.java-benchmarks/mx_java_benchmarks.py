@@ -371,6 +371,14 @@ class BaseQuarkusBenchmarkSuite(BaseMicroserviceBenchmarkSuite):
                 '-H:EnableURLProtocols=http',
                 '-H:NativeLinkerOption=-no-pie',
                 '-H:-UseServiceLoaderFeature',
+                '--add-exports=org.graalvm.sdk/org.graalvm.nativeimage.impl=ALL-UNNAMED',
+                '--add-exports=org.graalvm.nativeimage.base/com.oracle.svm.util=ALL-UNNAMED',
+                '--add-exports=org.graalvm.nativeimage.builder/com.oracle.svm.core.configure=ALL-UNNAMED',
+                '--add-exports=org.graalvm.nativeimage.builder/com.oracle.svm.core.jdk.localization=ALL-UNNAMED',
+                '--add-exports=org.graalvm.nativeimage.builder/com.oracle.svm.core.jdk=ALL-UNNAMED',
+                '--add-exports=org.graalvm.nativeimage.builder/com.oracle.svm.core.jni=ALL-UNNAMED',
+                '--add-exports=org.graalvm.nativeimage.builder/com.oracle.svm.core.threadlocal=ALL-UNNAMED',
+                '--initialize-at-run-time=io.netty.internal.tcnative.SSL,io.netty.handler.codec.compression.ZstdOptions',
                 '-H:+StackTrace'] + super(BaseQuarkusBenchmarkSuite, self).extra_image_build_argument(benchmark, args)
 
 
@@ -459,6 +467,11 @@ class BaseMicronautBenchmarkSuite(BaseMicroserviceBenchmarkSuite):
     def build_assertions(self, benchmark, is_gate):
         # This method overrides NativeImageMixin.build_assertions
         return []  # We are skipping build assertions due to some failed asserts while building Micronaut apps.
+
+    def extra_image_build_argument(self, benchmark, args):
+        return [
+                   '--add-exports=org.graalvm.nativeimage.builder/com.oracle.svm.core.jdk=ALL-UNNAMED',
+               ] + super(BaseMicronautBenchmarkSuite, self).extra_image_build_argument(benchmark, args)
 
     def default_stages(self):
         return ['instrument-image', 'instrument-run', 'image', 'run']
@@ -794,8 +807,8 @@ _daCapoIterations = {
     "pmd"         : 30,
     "sunflow"     : 35,
     "tomcat"      : -1,
-    "tradebeans"  : 20,
-    "tradesoap"   : 20,
+    "tradebeans"  : -1,
+    "tradesoap"   : -1,
     "xalan"       : 30,
 }
 
@@ -844,10 +857,10 @@ class DaCapoBenchmarkSuite(BaseDaCapoBenchmarkSuite): #pylint: disable=too-many-
             return "dacapo-{}".format(self.workloadSize())
 
     def defaultSuiteVersion(self):
-        return "9.12-MR1-bach"
+        return self.availableSuiteVersions()[-1]
 
     def availableSuiteVersions(self):
-        return ["9.12-bach", "9.12-MR1-bach"]
+        return ["9.12-bach", "9.12-MR1-bach", "9.12-MR1-git+2baec49"]
 
     def workloadSize(self):
         return "default"
@@ -858,6 +871,8 @@ class DaCapoBenchmarkSuite(BaseDaCapoBenchmarkSuite): #pylint: disable=too-many-
             title = "DaCapo 9.12"
         elif self.version() == "9.12-MR1-bach":
             title = "DaCapo 9.12-MR1"
+        elif self.version() == "9.12-MR1-git+2baec49":
+            title = "DaCapo 9.12-MR1-git+2baec49"
         return title
 
     def daCapoClasspathEnvVarName(self):
@@ -866,8 +881,10 @@ class DaCapoBenchmarkSuite(BaseDaCapoBenchmarkSuite): #pylint: disable=too-many-
     def daCapoLibraryName(self):
         if self.version() == "9.12-bach":  # 2009 release
             return "DACAPO"
-        elif self.version() == "9.12-MR1-bach":  # 2018 maintenance release
+        elif self.version() == "9.12-MR1-bach":  # 2018 maintenance release (January 2018)
             return "DACAPO_MR1_BACH"
+        elif self.version() == "9.12-MR1-git+2baec49":  # commit from July 2018
+            return "DACAPO_MR1_2baec49"
         else:
             return None
 
@@ -881,16 +898,15 @@ class DaCapoBenchmarkSuite(BaseDaCapoBenchmarkSuite): #pylint: disable=too-many-
             # Stopped working as of 8u92 on the initial release
             del iterations["tomcat"]
 
-        if self.version() in ["9.12-bach", "9.12-MR1-bach"]:
-            if mx.get_jdk().javaCompliance >= '9':
-                if "batik" in iterations:
-                    # batik crashes on JDK9+. This is fixed in the dacapo chopin release only
-                    del iterations["batik"]
-                if "tradesoap" in iterations:
-                    # validation fails transiently but frequently in the first iteration in JDK9+
-                    del iterations["tradesoap"]
-            elif not _is_batik_supported(java_home_jdk()):
+        if mx.get_jdk().javaCompliance >= '9':
+            if "batik" in iterations:
+                # batik crashes on JDK9+. This is fixed on the dacapo chopin branch only
                 del iterations["batik"]
+            if "tradesoap" in iterations:
+                # validation fails transiently but frequently in the first iteration in JDK9+
+                del iterations["tradesoap"]
+        elif not _is_batik_supported(java_home_jdk()):
+            del iterations["batik"]
 
         if self.workloadSize() == "small":
             # Ensure sufficient warmup by doubling the number of default iterations for the small configuration
@@ -916,7 +932,7 @@ class DaCapoBenchmarkSuite(BaseDaCapoBenchmarkSuite): #pylint: disable=too-many-
     def vmArgs(self, bmSuiteArgs):
         vmArgs = super(DaCapoBenchmarkSuite, self).vmArgs(bmSuiteArgs)
         if java_home_jdk().javaCompliance >= '16':
-            vmArgs += ["--add-opens", "java.base/java.lang=ALL-UNNAMED"]
+            vmArgs += ["--add-opens", "java.base/java.lang=ALL-UNNAMED", "--add-opens", "java.base/java.net=ALL-UNNAMED"]
         return vmArgs
 
 
@@ -1215,7 +1231,7 @@ class ScalaDacapoLargeBenchmarkSuite(ScalaDaCapoBenchmarkSuite):
         return "large"
 
     def flakySkipPatterns(self, benchmarks, bmSuiteArgs):
-        skip_patterns = super(ScalaDaCapoBenchmarkSuite, self).flakySuccessPatterns()
+        skip_patterns = super(ScalaDacapoLargeBenchmarkSuite, self).flakySuccessPatterns()
         if "specs" in benchmarks:
             skip_patterns += [
                 re.escape(r"Line count validation failed for stdout.log, expecting 1996 found 1997"),
@@ -1888,14 +1904,13 @@ class RenaissanceBenchmarkSuite(mx_benchmark.JavaBenchmarkSuite, mx_benchmark.Av
         return benchmarks
 
     def completeBenchmarkList(self, bmSuiteArgs):
-        return sorted([bench for bench in _renaissanceConfig.keys()])
+        return sorted(bench for bench in _renaissanceConfig)
 
     def defaultSuiteVersion(self):
-        #  return self.availableSuiteVersions()[-1]
-        return "0.11.0"  # stick to 0.11.0 for both JIT and AOT until Native Image is compatible with 0.13.0 (GR-34147)
+        return self.availableSuiteVersions()[-1]
 
     def availableSuiteVersions(self):
-        return ["0.9.0", "0.10.0", "0.11.0", "0.12.0", "0.13.0", "0.14.0"]
+        return ["0.9.0", "0.10.0", "0.11.0", "0.12.0", "0.13.0", "0.14.0", "0.14.1"]
 
     def renaissancePath(self):
         lib = mx.library(self.renaissanceLibraryName())
@@ -2346,7 +2361,7 @@ class ConsoleBenchmarkSuite(mx_benchmark.JavaBenchmarkSuite):
             mx.abort("Must specify exactly one benchmark to run.")
         elif benchmarks[0] not in self.benchmarkList(bmSuiteArgs):
             mx.abort("The specified benchmark doesn't exist. Possible values are: " + ", ".join(self.benchmarkList(bmSuiteArgs)))
-        vmArgs = self.runArgs(bmSuiteArgs)
+        vmArgs = self.vmArgs(bmSuiteArgs)
         runArgs = self.runArgs(bmSuiteArgs)
         appArgs = self.appArgs(benchmarks[0])
         return vmArgs + self.classpathAndMainClass(benchmarks[0]) + runArgs + appArgs

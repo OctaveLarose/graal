@@ -35,6 +35,7 @@ import com.oracle.truffle.api.nodes.RootNode;
 import com.oracle.truffle.llvm.runtime.IDGenerater.BitcodeID;
 import com.oracle.truffle.llvm.runtime.LLVMLanguage;
 import com.oracle.truffle.llvm.runtime.LLVMLanguage.LLVMThreadLocalValue;
+import com.oracle.truffle.llvm.runtime.global.LLVMGlobalContainer;
 import com.oracle.truffle.llvm.runtime.memory.LLVMAllocateNode;
 import com.oracle.truffle.llvm.runtime.pointer.LLVMPointer;
 
@@ -44,13 +45,19 @@ public class AggregateTLGlobalInPlaceNode extends RootNode {
     private final ContextThreadLocal<LLVMThreadLocalValue> contextThreadLocal;
     @Child private LLVMAllocateNode allocTLSection;
     private final BitcodeID bitcodeID;
+    private final int globalContainersSize;
+    private final long allocationSize;
 
-    public AggregateTLGlobalInPlaceNode(LLVMLanguage llvmLanguage, AggregateLiteralInPlaceNode inPlaceNode, LLVMAllocateNode allocTLSection, BitcodeID bitcodeID) {
+    public AggregateTLGlobalInPlaceNode(LLVMLanguage llvmLanguage, AggregateLiteralInPlaceNode inPlaceNode, LLVMAllocateNode allocTLSection, BitcodeID bitcodeID, int globalContainersSize,
+                    long allocationSize) {
         super(llvmLanguage);
         this.contextThreadLocal = llvmLanguage.contextThreadLocal;
         this.inPlaceNode = inPlaceNode;
         this.allocTLSection = allocTLSection;
         this.bitcodeID = bitcodeID;
+        // The size of the global container is one larger, as the counter starts at 1.
+        this.globalContainersSize = globalContainersSize + 1;
+        this.allocationSize = allocationSize;
     }
 
     @Override
@@ -63,7 +70,21 @@ public class AggregateTLGlobalInPlaceNode extends RootNode {
 
     public void executeWithThread(VirtualFrame frame, Thread thread) {
         LLVMPointer tlgBase = allocOrNull(allocTLSection);
-        contextThreadLocal.get(thread).addSection(tlgBase, bitcodeID);
+
+        if (tlgBase != null) {
+            assert allocationSize > 0;
+            // The base section for the thread local globals are initialized to the context thread
+            // local
+            contextThreadLocal.get(thread).addSection(tlgBase, allocationSize, bitcodeID);
+        }
+
+        // The global containers for the thread local globals are initialized to the context thread
+        // local.
+        LLVMGlobalContainer[] globalContainers = new LLVMGlobalContainer[globalContainersSize];
+        for (int i = 0; i < globalContainersSize; i++) {
+            globalContainers[i] = new LLVMGlobalContainer();
+        }
+        contextThreadLocal.get(thread).addGlobalContainer(globalContainers, bitcodeID);
         inPlaceNode.execute(frame, thread);
     }
 

@@ -29,16 +29,6 @@
  */
 package com.oracle.truffle.llvm;
 
-import java.nio.ByteOrder;
-import java.nio.file.Path;
-import java.nio.file.Paths;
-import java.util.ArrayList;
-import java.util.List;
-import java.util.ListIterator;
-import java.util.stream.Collectors;
-
-import org.graalvm.polyglot.io.ByteSequence;
-
 import com.oracle.truffle.api.CallTarget;
 import com.oracle.truffle.api.CompilerDirectives.TruffleBoundary;
 import com.oracle.truffle.api.TruffleFile;
@@ -58,7 +48,6 @@ import com.oracle.truffle.llvm.parser.model.GlobalSymbol;
 import com.oracle.truffle.llvm.parser.model.ModelModule;
 import com.oracle.truffle.llvm.parser.model.functions.FunctionSymbol;
 import com.oracle.truffle.llvm.parser.model.symbols.globals.GlobalVariable;
-import com.oracle.truffle.llvm.parser.model.target.TargetDataLayout;
 import com.oracle.truffle.llvm.parser.nodes.LLVMSymbolReadResolver;
 import com.oracle.truffle.llvm.parser.scanner.LLVMScanner;
 import com.oracle.truffle.llvm.runtime.CommonNodeFactory;
@@ -72,6 +61,7 @@ import com.oracle.truffle.llvm.runtime.LLVMFunction;
 import com.oracle.truffle.llvm.runtime.LLVMFunctionCode;
 import com.oracle.truffle.llvm.runtime.LLVMLanguage;
 import com.oracle.truffle.llvm.runtime.LLVMScope;
+import com.oracle.truffle.llvm.runtime.LLVMThreadLocalSymbol;
 import com.oracle.truffle.llvm.runtime.LibraryLocator;
 import com.oracle.truffle.llvm.runtime.NativeContextExtension;
 import com.oracle.truffle.llvm.runtime.NodeFactory;
@@ -86,6 +76,15 @@ import com.oracle.truffle.llvm.runtime.global.LLVMGlobal;
 import com.oracle.truffle.llvm.runtime.nodes.api.LLVMExpressionNode;
 import com.oracle.truffle.llvm.runtime.options.SulongEngineOption;
 import com.oracle.truffle.llvm.runtime.target.TargetTriple;
+import org.graalvm.polyglot.io.ByteSequence;
+
+import java.nio.ByteOrder;
+import java.nio.file.Path;
+import java.nio.file.Paths;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.ListIterator;
+import java.util.stream.Collectors;
 
 /**
  * Drives a parsing request.
@@ -356,8 +355,7 @@ final class ParserDriver {
         ModelModule module = new ModelModule();
         Source source = binaryParserResult.getSource();
         LLVMScanner.parseBitcode(binaryParserResult.getBitcode(), module, source);
-        TargetDataLayout layout = module.getTargetDataLayout();
-        DataLayout targetDataLayout = new DataLayout(layout.getDataLayout());
+        DataLayout targetDataLayout = new DataLayout(module.getTargetDataLayout(), ModelModule.defaultLayout);
         verifyBitcodeSource(source, targetDataLayout, getTargetTriple(module));
         NodeFactory nodeFactory = context.getLanguage().getActiveConfiguration().createNodeFactory(language, targetDataLayout);
         // Create a new public file scope to be returned inside sulong library.
@@ -368,6 +366,7 @@ final class ParserDriver {
                         binaryParserResult.getLocator());
         LLVMParser parser = new LLVMParser(source, runtime);
         LLVMParserResult result = parser.parse(module, targetDataLayout);
+        binaryParserResult.getExportSymbolsMapper().registerExports(fileScope, publicFileScope);
         createDebugInfo(module, new LLVMSymbolReadResolver(runtime, null, GetStackSpaceFactory.createAllocaFactory(), targetDataLayout, false));
         return result;
     }
@@ -493,9 +492,14 @@ final class ParserDriver {
         }
         for (GlobalVariable global : parserResult.getExternalGlobals()) {
             if (!fileScope.contains(global.getName())) {
-                fileScope.register(
-                                LLVMGlobal.create(global.getName(), global.getType(), global.getSourceSymbol(), global.isReadOnly(), global.getIndex(), parserResult.getRuntime().getBitcodeID(),
-                                                false, global.isExternalWeak()));
+                if (global.isThreadLocal()) {
+                    fileScope.register(LLVMThreadLocalSymbol.create(global.getName(), global.getSourceSymbol(), parserResult.getRuntime().getBitcodeID(),
+                                    global.getIndex(), global.isExported(), global.isExternalWeak()));
+                } else {
+                    fileScope.register(
+                                    LLVMGlobal.create(global.getName(), global.getType(), global.getSourceSymbol(), global.isReadOnly(), global.getIndex(), parserResult.getRuntime().getBitcodeID(),
+                                                    false, global.isExternalWeak()));
+                }
             }
         }
     }

@@ -56,6 +56,7 @@ import com.oracle.truffle.api.dsl.GenerateUncached;
 import com.oracle.truffle.api.dsl.ImportStatic;
 import com.oracle.truffle.api.dsl.Specialization;
 import com.oracle.truffle.api.nodes.Node;
+import com.oracle.truffle.api.profiles.BranchProfile;
 import com.oracle.truffle.api.profiles.ConditionProfile;
 import com.oracle.truffle.api.profiles.ValueProfile;
 import com.oracle.truffle.api.strings.TruffleString.AsTruffleStringNode;
@@ -425,7 +426,7 @@ public final class MutableTruffleString extends AbstractTruffleString {
             int byteLength = a.length() << a.stride();
             TruffleString.boundsCheckI(byteIndex, byteLength);
             TStringOps.writeS0(a.data(), a.offset(), byteLength, byteIndex, value);
-            if (!(TSCodeRange.is7Bit(a.codeRange) && value < 0)) {
+            if (!(TSCodeRange.is7Bit(a.codeRange) && value >= 0)) {
                 a.invalidateCachedAttributes();
             }
         }
@@ -484,10 +485,11 @@ public final class MutableTruffleString extends AbstractTruffleString {
         static MutableTruffleString concat(AbstractTruffleString a, AbstractTruffleString b, TruffleString.Encoding expectedEncoding,
                         @Cached TruffleString.ToIndexableNode toIndexableNodeA,
                         @Cached TruffleString.ToIndexableNode toIndexableNodeB,
-                        @Cached TStringInternalNodes.ConcatMaterializeBytesNode materializeBytesNode) {
+                        @Cached TStringInternalNodes.ConcatMaterializeBytesNode materializeBytesNode,
+                        @Cached BranchProfile outOfMemoryProfile) {
             a.checkEncoding(expectedEncoding);
             b.checkEncoding(expectedEncoding);
-            int length = TruffleString.ConcatNode.addByteLengths(a, b, expectedEncoding.naturalStride);
+            int length = TruffleString.ConcatNode.addByteLengths(a, b, expectedEncoding.naturalStride, outOfMemoryProfile);
             int offset = 0;
             byte[] array = materializeBytesNode.execute(a, toIndexableNodeA.execute(a, a.data()), b, toIndexableNodeB.execute(b, b.data()), expectedEncoding.id, length,
                             expectedEncoding.naturalStride);
@@ -556,8 +558,8 @@ public final class MutableTruffleString extends AbstractTruffleString {
             a.boundsCheckRegion(fromIndex, length, getCodePointLengthNode);
             Object arrayA = toIndexableNode.execute(a, a.data());
             final int codeRangeA = getCodeRangeANode.execute(a);
-            int fromIndexRaw = translateIndexNode.execute(a, arrayA, codeRangeA, 0, fromIndex, length == 0);
-            int lengthRaw = translateIndexNode.execute(a, arrayA, codeRangeA, fromIndexRaw, length, true);
+            int fromIndexRaw = translateIndexNode.execute(a, arrayA, codeRangeA, expectedEncoding.id, 0, fromIndex, length == 0);
+            int lengthRaw = translateIndexNode.execute(a, arrayA, codeRangeA, expectedEncoding.id, fromIndexRaw, length, true);
             int stride = expectedEncoding.naturalStride;
             return SubstringByteIndexNode.createSubstring(a, fromIndexRaw << stride, lengthRaw << stride, expectedEncoding, copyToByteArrayNode);
         }
@@ -783,6 +785,7 @@ public final class MutableTruffleString extends AbstractTruffleString {
                         @Cached("createClassProfile()") ValueProfile dataClassProfile,
                         @Cached ConditionProfile asciiBytesLatinProfile,
                         @Cached ConditionProfile utf8Profile,
+                        @Cached ConditionProfile utf8BrokenProfile,
                         @Cached ConditionProfile utf16Profile,
                         @Cached ConditionProfile utf16S0Profile,
                         @Cached ConditionProfile utf32Profile,
@@ -819,7 +822,7 @@ public final class MutableTruffleString extends AbstractTruffleString {
                 codePointLength = length;
             } else {
                 if (utf8Profile.profile(isUTF8(encoding))) {
-                    long attrs = TStringOps.calcStringAttributesUTF8(this, data, offset, length, false, false);
+                    long attrs = TStringOps.calcStringAttributesUTF8(this, data, offset, length, false, false, utf8BrokenProfile);
                     codeRange = StringAttributes.getCodeRange(attrs);
                     codePointLength = StringAttributes.getCodePointLength(attrs);
                 } else if (asciiBytesLatinProfile.profile(TStringGuards.isAsciiBytesOrLatin1(encoding))) {

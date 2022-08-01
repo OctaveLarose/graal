@@ -109,6 +109,17 @@
     #include <mach-o/dyld.h>
     #include <sys/syslimits.h>
     #include <sys/stat.h>
+
+    #ifndef LIBJLI_RELPATH
+        #error path to jli library undefined
+    #endif
+    #define LIBJLI_RELPATH_STR STR(LIBJLI_RELPATH)
+
+    /* Support Cocoa event loop on the main thread */
+    #include <Cocoa/Cocoa.h>
+    #include <objc/objc-runtime.h>
+    #include <objc/objc-auto.h>
+
 #elif defined (_WIN32)
     #include <windows.h>
     #include <libloaderapi.h>
@@ -128,7 +139,7 @@ extern char **environ;
 bool debug = false;
 bool relaunch = false;
 
-/* platform-independent environment setter */
+/* platform-independent environment setter, use empty value to clear */
 int setenv(std::string key, std::string value) {
     if (debug) {
         std::cout << "Setting env variable " << key << "=" << value << std::endl;
@@ -139,9 +150,17 @@ int setenv(std::string key, std::string value) {
             return -1;
         }
     #else
-        if (setenv(key.c_str(), value.c_str(), 1) == -1) {
-            perror("setenv failed");
-            return -1;
+        if (value.empty()) {
+            /* on posix, unsetenv cleares the env variable */
+            if (unsetenv(key.c_str()) == -1) {
+                perror("unsetenv failed");
+                return -1;
+            }
+        } else {
+            if (setenv(key.c_str(), value.c_str(), 1) == -1) {
+                perror("setenv failed");
+                return -1;
+            }
         }
     #endif
     return 0;
@@ -188,6 +207,19 @@ std::string exe_directory() {
     free(path);
     return exeDir;
 }
+
+#if defined (__APPLE__)
+/* Load libjli - this is needed on osx for libawt, which uses JLI_* methods.
+ * If the GraalVM libjli is not loaded, the osx linker will look up the symbol
+ * via the JavaRuntimeSupport.framework (JRS), which will fall back to the
+ * system JRE and fail if none is installed
+ */
+void *load_jli_lib(std::string exeDir) {
+    std::stringstream libjliPath;
+    libjliPath << exeDir << DIR_SEP_STR << LIBJLI_RELPATH_STR;
+    return dlopen(libjliPath.str().c_str(), RTLD_NOW);
+}
+#endif
 
 /* load the language library (either native library or libjvm) and return a
  * pointer to the JNI_CreateJavaVM function */
@@ -250,9 +282,13 @@ void parse_vm_options(int argc, char **argv, std::string exeDir, JavaVMInitArgs 
         const char *launcherOptionVars[] = LAUNCHER_OPTION_VARS;
     #endif
 
-    /* set org.graalvm.launcher.class system property - only needed for jvm mode */
+    /* set system properties only needed for jvm mode */
     if (jvmMode) {
         vmArgs.push_back("-Dorg.graalvm.launcher.class=" LAUNCHER_CLASS_STR);
+        std::stringstream executablename;
+        executablename << "-Dorg.graalvm.launcher.executablename=";
+        executablename << argv[0];
+        vmArgs.push_back(executablename.str());
     }
 
     /* construct classpath - only needed for jvm mode */
@@ -345,6 +381,41 @@ void parse_vm_options(int argc, char **argv, std::string exeDir, JavaVMInitArgs 
     }
 }
 
+static int jvm_main_thread(int argc, char *argv[], std::string exeDir, char *jvmModeEnv, bool jvmMode, std::string libPath);
+
+#if defined (__APPLE__)
+static void dummyTimer(CFRunLoopTimerRef timer, void *info) {}
+
+static void ParkEventLoop() {
+    // RunLoop needs at least one source, and 1e20 is pretty far into the future
+    CFRunLoopTimerRef t = CFRunLoopTimerCreate(kCFAllocatorDefault, 1.0e20, 0.0, 0, 0, dummyTimer, NULL);
+    CFRunLoopAddTimer(CFRunLoopGetCurrent(), t, kCFRunLoopDefaultMode);
+    CFRelease(t);
+
+    // Park this thread in the main run loop.
+    int32_t result;
+    do {
+        result = CFRunLoopRunInMode(kCFRunLoopDefaultMode, 1.0e20, false);
+    } while (result != kCFRunLoopRunFinished);
+}
+
+struct MainThreadArgs {
+    int argc;
+    char **argv;
+    std::string exeDir;
+    char *jvmModeEnv;
+    bool jvmMode;
+    std::string libPath;
+};
+
+static void *apple_main (void *arg)
+{
+    struct MainThreadArgs *args = (struct MainThreadArgs *) arg;
+    int ret = jvm_main_thread(args->argc, args->argv, args->exeDir, args->jvmModeEnv, args->jvmMode, args->libPath);
+    exit(ret);
+}
+#endif /* __APPLE__ */
+
 int main(int argc, char *argv[]) {
     debug = (getenv("VERBOSE_GRAALVM_LAUNCHERS") != NULL);
     std::string exeDir = exe_directory();
@@ -362,6 +433,38 @@ int main(int argc, char *argv[]) {
         }
     }
 
+#if defined (__APPLE__)
+    if (jvmMode) {
+        if (!load_jli_lib(exeDir)) {
+            std::cerr << "Loading libjli failed." << std::endl;
+            return -1;
+        }
+    }
+
+    struct MainThreadArgs args = { argc, argv, exeDir, jvmModeEnv, jvmMode, libPath};
+
+    /* Create dedicated "main" thread for the JVM. The actual main thread
+     * must run the UI event loop on macOS. Inspired by this OpenJDK code:
+     * https://github.com/openjdk/jdk/blob/011958d30b275f0f6a2de097938ceeb34beb314d/src/java.base/macosx/native/libjli/java_md_macosx.m#L328-L358
+     */
+    pthread_t main_thr;
+    if (pthread_create(&main_thr, NULL, &apple_main, &args) != 0) {
+        std::cerr << "Could not create main thread: " << strerror(errno) << std::endl;
+        return -1;
+    }
+    if (pthread_detach(main_thr)) {
+        std::cerr << "pthread_detach() failed: " << strerror(errno) << std::endl;
+        return -1;
+    }
+
+    ParkEventLoop();
+    return 0;
+#else
+    return jvm_main_thread(argc, argv, exeDir, jvmModeEnv, jvmMode, libPath);
+#endif
+}
+
+static int jvm_main_thread(int argc, char *argv[], std::string exeDir, char *jvmModeEnv, bool jvmMode, std::string libPath) {
     /* parse VM args */
     JavaVM *vm;
     JNIEnv *env;

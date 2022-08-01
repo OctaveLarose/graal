@@ -30,6 +30,7 @@
 package com.oracle.truffle.llvm.parser.factories;
 
 import com.oracle.truffle.api.CompilerDirectives;
+import com.oracle.truffle.llvm.parser.factories.inlineasm.UnknownInlineAssemblyParser;
 import com.oracle.truffle.llvm.runtime.LLVMSyscallEntry;
 import com.oracle.truffle.llvm.runtime.memory.LLVMSyscallOperationNode;
 import com.oracle.truffle.llvm.runtime.nodes.asm.syscall.LLVMUnsupportedSyscallNode;
@@ -55,7 +56,7 @@ final class UnknownBasicPlatformCapability extends BasicPlatformCapability<Unkno
     }
 
     UnknownBasicPlatformCapability(boolean loadCxxLibraries) {
-        super(UnknownSyscalls.class, loadCxxLibraries);
+        super(UnknownSyscalls.class, loadCxxLibraries, new UnknownInlineAssemblyParser());
     }
 
     @Override
@@ -69,12 +70,12 @@ final class UnknownBasicPlatformCapability extends BasicPlatformCapability<Unkno
     }
 
     @Override
-    public Object createVAListStorage(LLVMVAListNode allocaNode, LLVMPointer vaListStackPtr) {
+    public Object createVAListStorage(LLVMVAListNode allocaNode, LLVMPointer vaListStackPtr, Type vaListType) {
         throw CompilerDirectives.shouldNotReachHere();
     }
 
     @Override
-    public Type getVAListType() {
+    public Type getGlobalVAListType(Type type) {
         throw CompilerDirectives.shouldNotReachHere();
     }
 

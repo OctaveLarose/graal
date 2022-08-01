@@ -571,8 +571,8 @@ supr java.lang.Object
 CLSS public final static !enum org.graalvm.nativeimage.c.function.CEntryPoint$Publish
  outer org.graalvm.nativeimage.c.function.CEntryPoint
 fld public final static org.graalvm.nativeimage.c.function.CEntryPoint$Publish NotPublished
-fld public final static org.graalvm.nativeimage.c.function.CEntryPoint$Publish SymbolOnly
 fld public final static org.graalvm.nativeimage.c.function.CEntryPoint$Publish SymbolAndHeader
+fld public final static org.graalvm.nativeimage.c.function.CEntryPoint$Publish SymbolOnly
 meth public static org.graalvm.nativeimage.c.function.CEntryPoint$Publish valueOf(java.lang.String)
 meth public static org.graalvm.nativeimage.c.function.CEntryPoint$Publish[] values()
 supr java.lang.Enum<org.graalvm.nativeimage.c.function.CEntryPoint$Publish>
@@ -819,6 +819,7 @@ meth public static java.lang.String toJavaString(org.graalvm.nativeimage.c.type.
 meth public static java.lang.String toJavaString(org.graalvm.nativeimage.c.type.CCharPointer,org.graalvm.word.UnsignedWord)
 meth public static java.lang.String toJavaString(org.graalvm.nativeimage.c.type.CCharPointer,org.graalvm.word.UnsignedWord,java.nio.charset.Charset)
 meth public static java.nio.ByteBuffer asByteBuffer(org.graalvm.word.PointerBase,int)
+meth public static org.graalvm.nativeimage.c.type.CTypeConversion$CCharPointerHolder toCBytes(byte[])
 meth public static org.graalvm.nativeimage.c.type.CTypeConversion$CCharPointerHolder toCString(java.lang.CharSequence)
 meth public static org.graalvm.nativeimage.c.type.CTypeConversion$CCharPointerPointerHolder toCStrings(java.lang.CharSequence[])
 meth public static org.graalvm.word.UnsignedWord toCString(java.lang.CharSequence,java.nio.charset.Charset,org.graalvm.nativeimage.c.type.CCharPointer,org.graalvm.word.UnsignedWord)
@@ -871,6 +872,8 @@ innr public abstract interface static IsInConfigurationAccess
 innr public abstract interface static OnAnalysisExitAccess
 innr public abstract interface static QueryReachabilityAccess
 meth public boolean isInConfiguration(org.graalvm.nativeimage.hosted.Feature$IsInConfigurationAccess)
+meth public java.lang.String getDescription()
+meth public java.lang.String getURL()
 meth public java.util.List<java.lang.Class<? extends org.graalvm.nativeimage.hosted.Feature>> getRequiredFeatures()
 meth public void afterAnalysis(org.graalvm.nativeimage.hosted.Feature$AfterAnalysisAccess)
 meth public void afterCompilation(org.graalvm.nativeimage.hosted.Feature$AfterCompilationAccess)

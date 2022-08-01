@@ -50,6 +50,8 @@ import java.util.function.Supplier;
 import java.util.logging.Level;
 import java.util.stream.Collectors;
 
+import com.oracle.truffle.api.strings.AbstractTruffleString;
+import com.oracle.truffle.api.strings.TruffleString;
 import org.graalvm.collections.EconomicMap;
 import org.graalvm.collections.UnmodifiableEconomicMap;
 import org.graalvm.compiler.truffle.common.CompilableTruffleAST;
@@ -86,7 +88,7 @@ import com.oracle.truffle.api.CompilerDirectives.CompilationFinal;
 import com.oracle.truffle.api.CompilerDirectives.TruffleBoundary;
 import com.oracle.truffle.api.ExactMath;
 import com.oracle.truffle.api.HostCompilerDirectives.BytecodeInterpreterSwitch;
-import com.oracle.truffle.api.HostCompilerDirectives.BytecodeInterpreterSwitchBoundary;
+import com.oracle.truffle.api.HostCompilerDirectives.InliningCutoff;
 import com.oracle.truffle.api.OptimizationFailedException;
 import com.oracle.truffle.api.RootCallTarget;
 import com.oracle.truffle.api.Truffle;
@@ -116,7 +118,6 @@ import com.oracle.truffle.api.nodes.RepeatingNode;
 import com.oracle.truffle.api.nodes.RootNode;
 import com.oracle.truffle.api.nodes.SlowPathException;
 import com.oracle.truffle.api.nodes.UnexpectedResultException;
-import com.oracle.truffle.api.object.LayoutFactory;
 import com.oracle.truffle.api.profiles.BranchProfile;
 import com.oracle.truffle.api.profiles.ConditionProfile;
 import com.oracle.truffle.api.source.SourceSection;
@@ -148,14 +149,14 @@ public abstract class GraalTruffleRuntime implements TruffleRuntime, TruffleComp
      */
     protected void clearState() {
         assert TruffleOptions.AOT : "Must be called only in AOT mode.";
-        callMethods = null;
+        knownMethods = null;
     }
 
     private final GraalTruffleRuntimeListenerDispatcher listeners = new GraalTruffleRuntimeListenerDispatcher();
 
     protected volatile TruffleCompiler truffleCompiler;
 
-    protected CallMethods callMethods;
+    protected KnownMethods knownMethods;
 
     private final GraalTVMCI tvmci = new GraalTVMCI();
     private volatile GraalTestTVMCI testTvmci;
@@ -388,7 +389,6 @@ public abstract class GraalTruffleRuntime implements TruffleRuntime, TruffleComp
                         ExactMath.class,
                         ArrayUtils.class,
                         FrameDescriptor.class,
-                        com.oracle.truffle.api.frame.FrameSlot.class,
                         FrameSlotKind.class,
                         MethodHandle.class,
                         ArrayList.class,
@@ -400,7 +400,9 @@ public abstract class GraalTruffleRuntime implements TruffleRuntime, TruffleComp
                         ConditionProfile.class,
                         Objects.class,
                         TruffleSafepoint.class,
-                        BaseOSRRootNode.class
+                        BaseOSRRootNode.class,
+                        TruffleString.class,
+                        AbstractTruffleString.class
         }) {
             m.put(c.getName(), c);
         }
@@ -412,7 +414,7 @@ public abstract class GraalTruffleRuntime implements TruffleRuntime, TruffleComp
                 m.put(c.getName(), c);
             }
         }
-        if (JAVA_SPECIFICATION_VERSION >= 16) {
+        if (JAVA_SPECIFICATION_VERSION >= 16 && JAVA_SPECIFICATION_VERSION < 19) {
             String className = "jdk.internal.access.foreign.MemorySegmentProxy";
             try {
                 Class<?> c = Class.forName(className);
@@ -466,8 +468,8 @@ public abstract class GraalTruffleRuntime implements TruffleRuntime, TruffleComp
         Runtime.getRuntime().addShutdownHook(new Thread(this::shutdown));
     }
 
-    protected void lookupCallMethods(MetaAccessProvider metaAccess) {
-        callMethods = CallMethods.lookup(metaAccess);
+    public final void initializeKnownMethods(MetaAccessProvider metaAccess) {
+        knownMethods = new KnownMethods(metaAccess);
     }
 
     /** Accessor for non-public state in {@link FrameDescriptor}. */
@@ -572,14 +574,14 @@ public abstract class GraalTruffleRuntime implements TruffleRuntime, TruffleComp
     private static final class FrameVisitor<T> implements InspectedFrameVisitor<T> {
 
         private final FrameInstanceVisitor<T> visitor;
-        private final CallMethods methods;
+        private final KnownMethods methods;
 
         private int skipFrames;
 
         private InspectedFrame callNodeFrame;
         private InspectedFrame osrFrame;
 
-        FrameVisitor(FrameInstanceVisitor<T> visitor, CallMethods methods, int skip) {
+        FrameVisitor(FrameInstanceVisitor<T> visitor, KnownMethods methods, int skip) {
             this.visitor = visitor;
             this.methods = methods;
             this.skipFrames = skip;
@@ -662,19 +664,20 @@ public abstract class GraalTruffleRuntime implements TruffleRuntime, TruffleComp
     }
 
     private <T> T iterateImpl(FrameInstanceVisitor<T> visitor, final int skip) {
-        CallMethods methods = getCallMethods();
+        KnownMethods methods = getKnownMethods();
         FrameVisitor<T> jvmciVisitor = new FrameVisitor<>(visitor, methods, skip);
         return getStackIntrospection().iterateFrames(methods.anyFrameMethod, methods.anyFrameMethod, 0, jvmciVisitor);
     }
 
     protected abstract StackIntrospection getStackIntrospection();
 
+    @SuppressWarnings("deprecation")
     @Override
     public <T> T getCapability(Class<T> capability) {
         if (capability == TVMCI.class) {
             return capability.cast(tvmci);
-        } else if (capability == LayoutFactory.class) {
-            LayoutFactory layoutFactory = loadObjectLayoutFactory();
+        } else if (capability == com.oracle.truffle.api.object.LayoutFactory.class) {
+            com.oracle.truffle.api.object.LayoutFactory layoutFactory = loadObjectLayoutFactory();
             ModuleUtil.exportTo(layoutFactory.getClass());
             return capability.cast(layoutFactory);
         } else if (capability == TVMCI.Test.class) {
@@ -690,13 +693,6 @@ public abstract class GraalTruffleRuntime implements TruffleRuntime, TruffleComp
     }
 
     public abstract SpeculationLog createSpeculationLog();
-
-    @Override
-    @Deprecated(since = "22.0")
-    @SuppressWarnings("deprecation")
-    public final RootCallTarget createCallTarget(RootNode rootNode) {
-        return rootNode.getCallTarget();
-    }
 
     protected abstract OptimizedCallTarget createOptimizedCallTarget(OptimizedCallTarget source, RootNode rootNode);
 
@@ -900,8 +896,8 @@ public abstract class GraalTruffleRuntime implements TruffleRuntime, TruffleComp
     public void bypassedInstalledCode(OptimizedCallTarget target) {
     }
 
-    protected CallMethods getCallMethods() {
-        return callMethods;
+    public KnownMethods getKnownMethods() {
+        return knownMethods;
     }
 
     /**
@@ -911,8 +907,9 @@ public abstract class GraalTruffleRuntime implements TruffleRuntime, TruffleComp
         return GraalTVMCI.getEngineData(rootNode);
     }
 
-    private static LayoutFactory loadObjectLayoutFactory() {
-        return selectObjectLayoutFactory(loadService(LayoutFactory.class));
+    @SuppressWarnings("deprecation")
+    private static com.oracle.truffle.api.object.LayoutFactory loadObjectLayoutFactory() {
+        return selectObjectLayoutFactory(loadService(com.oracle.truffle.api.object.LayoutFactory.class));
     }
 
     private static <T> List<ServiceLoader<T>> loadService(Class<T> service) {
@@ -927,11 +924,12 @@ public abstract class GraalTruffleRuntime implements TruffleRuntime, TruffleComp
         return Arrays.asList(graalLoader, appLoader);
     }
 
-    private static LayoutFactory selectObjectLayoutFactory(Iterable<? extends Iterable<LayoutFactory>> availableLayoutFactories) {
+    @SuppressWarnings("deprecation")
+    private static com.oracle.truffle.api.object.LayoutFactory selectObjectLayoutFactory(Iterable<? extends Iterable<com.oracle.truffle.api.object.LayoutFactory>> availableLayoutFactories) {
         String layoutFactoryImplName = Services.getSavedProperties().get("truffle.object.LayoutFactory");
-        LayoutFactory bestLayoutFactory = null;
-        for (Iterable<LayoutFactory> currentLayoutFactories : availableLayoutFactories) {
-            for (LayoutFactory currentLayoutFactory : currentLayoutFactories) {
+        com.oracle.truffle.api.object.LayoutFactory bestLayoutFactory = null;
+        for (Iterable<com.oracle.truffle.api.object.LayoutFactory> currentLayoutFactories : availableLayoutFactories) {
+            for (com.oracle.truffle.api.object.LayoutFactory currentLayoutFactory : currentLayoutFactories) {
                 if (layoutFactoryImplName != null) {
                     if (currentLayoutFactory.getClass().getName().equals(layoutFactoryImplName)) {
                         return currentLayoutFactory;
@@ -963,26 +961,38 @@ public abstract class GraalTruffleRuntime implements TruffleRuntime, TruffleComp
         return Integer.parseInt(value);
     }
 
-    protected static final class CallMethods {
+    public final class KnownMethods {
         public final ResolvedJavaMethod callDirectMethod;
         public final ResolvedJavaMethod callInlinedMethod;
         public final ResolvedJavaMethod callIndirectMethod;
         public final ResolvedJavaMethod callTargetMethod;
         public final ResolvedJavaMethod callInlinedCallMethod;
         public final ResolvedJavaMethod[] anyFrameMethod;
+        public final ResolvedJavaMethod inInterpreterMethod;
+        public final ResolvedJavaMethod[] transferToInterpreterMethods;
 
-        private CallMethods(MetaAccessProvider metaAccess) {
+        public KnownMethods(MetaAccessProvider metaAccess) {
             this.callDirectMethod = metaAccess.lookupJavaMethod(GraalFrameInstance.CALL_DIRECT);
             this.callIndirectMethod = metaAccess.lookupJavaMethod(GraalFrameInstance.CALL_INDIRECT);
             this.callInlinedMethod = metaAccess.lookupJavaMethod(GraalFrameInstance.CALL_INLINED);
             this.callInlinedCallMethod = metaAccess.lookupJavaMethod(GraalFrameInstance.CALL_INLINED_CALL);
             this.callTargetMethod = metaAccess.lookupJavaMethod(GraalFrameInstance.CALL_TARGET_METHOD);
             this.anyFrameMethod = new ResolvedJavaMethod[]{callDirectMethod, callIndirectMethod, callInlinedMethod, callTargetMethod, callInlinedCallMethod};
+            ResolvedJavaType compilerDirectives = metaAccess.lookupJavaType(CompilerDirectives.class);
+            this.transferToInterpreterMethods = new ResolvedJavaMethod[2];
+            this.transferToInterpreterMethods[0] = searchMethod(compilerDirectives, "transferToInterpreter");
+            this.transferToInterpreterMethods[1] = searchMethod(compilerDirectives, "transferToInterpreterAndInvalidate");
+            this.inInterpreterMethod = searchMethod(compilerDirectives, "inInterpreter");
         }
+    }
 
-        public static CallMethods lookup(MetaAccessProvider metaAccess) {
-            return new CallMethods(metaAccess);
+    protected static ResolvedJavaMethod searchMethod(ResolvedJavaType type, String name) {
+        for (ResolvedJavaMethod searchMethod : type.getDeclaredMethods()) {
+            if (searchMethod.getName().equals(name)) {
+                return searchMethod;
+            }
         }
+        throw CompilerDirectives.shouldNotReachHere(type + "." + name + " method not found.");
     }
 
     @Override
@@ -1090,8 +1100,36 @@ public abstract class GraalTruffleRuntime implements TruffleRuntime, TruffleComp
     }
 
     @Override
+    public boolean isInliningCutoff(ResolvedJavaMethod method) {
+        return getAnnotation(InliningCutoff.class, method) != null;
+    }
+
+    /**
+     * Determines if {@code method} is an inInterpeter method.
+     */
+    @Override
+    public boolean isInInterpreter(ResolvedJavaMethod targetMethod) {
+        return getKnownMethods().inInterpreterMethod.equals(targetMethod);
+    }
+
+    /**
+     * Determines if {@code method} is a method is a transferToInterpreter method.
+     */
+    @Override
+    public boolean isTransferToInterpreterMethod(ResolvedJavaMethod method) {
+        ResolvedJavaMethod[] methods = getKnownMethods().transferToInterpreterMethods;
+        for (int i = 0; i < methods.length; i++) {
+            if (methods[i].equals(method)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    @SuppressWarnings("deprecation")
+    @Override
     public boolean isBytecodeInterpreterSwitchBoundary(ResolvedJavaMethod method) {
-        return getAnnotation(BytecodeInterpreterSwitchBoundary.class, method) != null;
+        return getAnnotation(com.oracle.truffle.api.HostCompilerDirectives.BytecodeInterpreterSwitchBoundary.class, method) != null;
     }
 
     @Override

@@ -243,13 +243,7 @@ public abstract class LLVMToDebugValueNode extends LLVMNode implements LLVMDebug
         LLVMThreadLocalSymbol symbol = value.getDescriptor();
         Object target = LLVMLanguage.getContext().getSymbol(symbol, exception);
         LLVMThreadLocalPointer pointer = (LLVMThreadLocalPointer) LLVMManagedPointer.cast(target).getObject();
-        long offset = pointer.getOffset();
-        if (offset != 0) {
-            LLVMPointer base = LLVMLanguage.get(null).contextThreadLocal.get().getSection(symbol.getBitcodeID(exception));
-            LLVMPointer memory = base.increment(offset);
-            return new LLDBMemoryValue(memory);
-        }
-        return null;
+        return new LLDBMemoryValue(pointer.resolve(getLanguage(), exception));
     }
 
     @Fallback

@@ -47,8 +47,6 @@ import static com.oracle.truffle.dsl.processor.java.ElementUtils.findAnnotationM
 import static com.oracle.truffle.dsl.processor.java.ElementUtils.firstLetterLowerCase;
 import static com.oracle.truffle.dsl.processor.java.ElementUtils.firstLetterUpperCase;
 import static com.oracle.truffle.dsl.processor.java.ElementUtils.getAnnotationValue;
-import static com.oracle.truffle.dsl.processor.java.ElementUtils.getQualifiedName;
-import static com.oracle.truffle.dsl.processor.java.ElementUtils.getReadableSignature;
 import static com.oracle.truffle.dsl.processor.java.ElementUtils.getSimpleName;
 import static com.oracle.truffle.dsl.processor.java.ElementUtils.getTypeId;
 import static com.oracle.truffle.dsl.processor.java.ElementUtils.getVisibility;
@@ -686,12 +684,14 @@ public class FlatNodeGenFactory {
                 if (field.getGetter() != null && field.getGetter().getModifiers().contains(Modifier.ABSTRACT)) {
                     CodeExecutableElement method = CodeExecutableElement.clone(field.getGetter());
                     method.getModifiers().remove(Modifier.ABSTRACT);
+                    method.addAnnotationMirror(new CodeAnnotationMirror(types.CompilerDirectives_TruffleBoundary));
                     method.createBuilder().startThrow().startNew(context.getType(UnsupportedOperationException.class)).end().end();
                     uncached.add(method);
                 }
                 if (field.isSettable()) {
                     CodeExecutableElement method = CodeExecutableElement.clone(field.getSetter());
                     method.getModifiers().remove(Modifier.ABSTRACT);
+                    method.addAnnotationMirror(new CodeAnnotationMirror(types.CompilerDirectives_TruffleBoundary));
                     method.createBuilder().startThrow().startNew(context.getType(UnsupportedOperationException.class)).end().end();
                     uncached.add(method);
                 }
@@ -804,7 +804,6 @@ public class FlatNodeGenFactory {
         }
 
         List<Object> bulkStateSet = new ArrayList<>();
-        Set<String> languagesChecked = new HashSet<>();
 
         for (SpecializationData specialization : filteredSpecializations) {
 
@@ -839,73 +838,12 @@ public class FlatNodeGenFactory {
                     bulkStateSet.add(guard);
                 }
                 if (specialization.isDynamicParameterBound(guard.getExpression(), true)) {
-                    if (!specialization.isOnlyLanguageReferencesBound(guard.getExpression())) {
-                        /*
-                         * Guards with only language references can be executed.
-                         */
-                        continue;
-                    }
-                }
-                usedGuards.add(guard);
-            }
-
-            for (CacheExpression cache : specialization.getCaches()) {
-                if (!cache.isAlwaysInitialized()) {
+                    /*
+                     * Guards with no dynamic parameters can be executed.
+                     */
                     continue;
                 }
-                if (cache.isCachedLanguage()) {
-                    boolean needsLocal = false;
-                    for (GuardExpression guard : usedGuards) {
-                        if (specialization.isExpressionBindsCache(guard.getExpression(), cache)) {
-                            needsLocal = true;
-                            break;
-                        }
-                    }
-                    if (!needsLocal) {
-                        for (CacheExpression otherCache : specialization.getCaches()) {
-                            if (cache == otherCache) {
-                                continue;
-                            }
-                            if (specialization.isExpressionBindsCache(otherCache.getDefaultExpression(), cache)) {
-                                needsLocal = true;
-                                break;
-                            }
-                        }
-                    }
-                    TypeMirror languageType = cache.getLanguageType();
-                    boolean needsCheck = false;
-                    if (!usedGuards.isEmpty()) {
-                        needsCheck = languagesChecked.add(ElementUtils.getTypeId(languageType));
-                    }
-                    CodeTreeBuilder b = builder.create();
-                    if (needsCheck) {
-                        b.startIf().string("language == null || language.getClass() != ").typeLiteral(languageType).end().startBlock();
-                        b.startStatement().startStaticCall(types.CompilerDirectives, "transferToInterpreterAndInvalidate").end().end();
-                        b.startThrow().startStaticCall(types.CompilerDirectives, "shouldNotReachHere");
-                        b.startStaticCall(context.getType(String.class), "format");
-                        b.doubleQuote(String.format("Specialization '%s' in node class '%s' is enabled for AOT generation. " +
-                                        "The specialization declares a @%s for language class %s but was prepared for AOT with language class '%%s'. " +
-                                        "Match the language used in the language reference or exclude the specialization from AOT generation with @%s.%s to resolve this problem.",
-                                        getReadableSignature(specialization.getMethod()),
-                                        getQualifiedName(specialization.getNode().getTemplateType()),
-                                        getSimpleName(types.CachedLanguage),
-                                        getQualifiedName(cache.getLanguageType()),
-                                        getSimpleName(types.GenerateAOT),
-                                        getSimpleName(types.GenerateAOT_Exclude)));
-                        b.string("language != null ? language.getClass().getName() : \"null\"");
-                        b.end();
-                        b.end().end(); // static call, throw,
-                        b.end(); // if block
-                    }
-                    if (needsLocal) {
-                        b.startStatement();
-                        b.type(languageType);
-                        b.string(" ", createCacheLocalName(specialization, cache));
-                        b.string(" = ").maybeCast(types.TruffleLanguage, cache.getLanguageType(), "language");
-                        b.end(); // statement
-                    }
-                    tripples.add(new IfTriple(b.build(), null, null));
-                }
+                usedGuards.add(guard);
             }
 
             for (GuardExpression guard : usedGuards) {
@@ -2020,6 +1958,8 @@ public class FlatNodeGenFactory {
             builder.startTryBlock();
             builder.tree(delegateBuilder.build());
             builder.end().startCatchBlock(types.UnexpectedResultException, "ex");
+            builder.tree(createTransferToInterpreterAndInvalidate());
+
             if (isVoid(type.getReturnType())) {
                 builder.returnStatement();
             } else {
@@ -2664,6 +2604,7 @@ public class FlatNodeGenFactory {
         builder.end();
         if (executeChild.throwsUnexpectedResult) {
             builder.startCatchBlock(types.UnexpectedResultException, "ex");
+            builder.tree(createTransferToInterpreterAndInvalidate());
             FrameState slowPathFrameState = originalFrameState.copy();
             slowPathFrameState.setValue(execution, targetValue.makeGeneric(context).accessWith(CodeTreeBuilder.singleString("ex.getResult()")));
 
@@ -4435,22 +4376,13 @@ public class FlatNodeGenFactory {
         CodeTreeBuilder builder = parent.create();
         builder.startTryBlock();
         builder.tree(execution);
-        boolean nonSlowPath = false;
         TypeMirror[] exceptionTypes = new TypeMirror[specialization.getExceptions().size()];
         for (int i = 0; i < exceptionTypes.length; i++) {
             TypeMirror type = specialization.getExceptions().get(i).getJavaClass();
-            if (!isAssignable(type, types.SlowPathException) && !isAssignable(type, context.getType(ArithmeticException.class))) {
-                nonSlowPath = true;
-            }
             exceptionTypes[i] = type;
         }
         builder.end().startCatchBlock(exceptionTypes, "ex");
-        if (nonSlowPath) {
-            builder.tree(createTransferToInterpreterAndInvalidate());
-        } else {
-            builder.lineComment("implicit transferToInterpreterAndInvalidate()");
-        }
-
+        builder.tree(createTransferToInterpreterAndInvalidate());
         builder.tree(createExcludeThis(builder, frameState, forType, specialization));
 
         builder.end();
@@ -4960,9 +4892,7 @@ public class FlatNodeGenFactory {
             } else {
                 expression = cache.getDefaultExpression();
                 if (aot) {
-                    if (!specialization.isOnlyLanguageReferencesBound(expression)) {
-                        expression = substituteManualToAutoDispatch(expression);
-                    }
+                    expression = substituteManualToAutoDispatch(expression);
                 }
                 if (specialization.needsTruffleBoundary() &&
                                 (specialization.isAnyLibraryBoundInGuard() || specialization.needsVirtualFrame())) {

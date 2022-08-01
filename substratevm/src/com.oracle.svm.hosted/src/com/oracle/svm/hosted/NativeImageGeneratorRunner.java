@@ -271,7 +271,7 @@ public class NativeImageGeneratorRunner {
         OptionValues parsedHostedOptions = classLoader.classLoaderSupport.getParsedHostedOptions();
 
         String imageName = SubstrateOptions.Name.getValue(parsedHostedOptions);
-        TimerCollection timerCollection = new TimerCollection(imageName);
+        TimerCollection timerCollection = new TimerCollection();
         Timer totalTimer = timerCollection.get(TimerCollection.Registry.TOTAL);
 
         if (NativeImageOptions.ListCPUFeatures.getValue(parsedHostedOptions)) {
@@ -296,10 +296,6 @@ public class NativeImageGeneratorRunner {
                 throw UserError.abort("No output file name specified. Use '%s'.", SubstrateOptionsParser.commandArgument(SubstrateOptions.Name, "<output-file>"));
             }
             try {
-
-                // print the time here to avoid interactions with flags processing
-                classlistTimer.print();
-
                 Map<Method, CEntryPointData> entryPoints = new HashMap<>();
                 Pair<Method, CEntryPointData> mainEntryPointData = Pair.empty();
                 JavaMainSupport javaMainSupport = null;
@@ -462,7 +458,6 @@ public class NativeImageGeneratorRunner {
             NativeImageGeneratorRunner.reportFatalError(e);
             return 1;
         } finally {
-            totalTimer.print();
             if (imageName != null && generator != null) {
                 reporter.printEpilog(imageName, generator, wasSuccessfulBuild, parsedHostedOptions);
             }
@@ -595,22 +590,22 @@ public class NativeImageGeneratorRunner {
     public static class JDK9Plus {
 
         public static void main(String[] args) {
-            ModuleSupport.exportAndOpenAllPackagesToUnnamed("org.graalvm.sdk", false);
-            ModuleSupport.exportAndOpenAllPackagesToUnnamed("org.graalvm.truffle", false);
-            ModuleSupport.exportAndOpenAllPackagesToUnnamed("jdk.internal.vm.ci", false);
-            ModuleSupport.exportAndOpenAllPackagesToUnnamed("jdk.internal.vm.compiler", false);
-            ModuleSupport.exportAndOpenAllPackagesToUnnamed("jdk.internal.vm.compiler.management", true);
-            ModuleSupport.exportAndOpenAllPackagesToUnnamed("com.oracle.graal.graal_enterprise", true);
-            ModuleSupport.exportAndOpenPackageToUnnamed("java.base", "jdk.internal.loader", false);
+            ModuleSupport.accessPackagesToClass(ModuleSupport.Access.OPEN, null, false, "org.graalvm.sdk");
+            ModuleSupport.accessPackagesToClass(ModuleSupport.Access.OPEN, null, false, "org.graalvm.truffle");
+            ModuleSupport.accessPackagesToClass(ModuleSupport.Access.OPEN, null, false, "jdk.internal.vm.ci");
+            ModuleSupport.accessPackagesToClass(ModuleSupport.Access.OPEN, null, false, "jdk.internal.vm.compiler");
+            ModuleSupport.accessPackagesToClass(ModuleSupport.Access.OPEN, null, true, "jdk.internal.vm.compiler.management");
+            ModuleSupport.accessPackagesToClass(ModuleSupport.Access.OPEN, null, true, "com.oracle.graal.graal_enterprise");
+            ModuleSupport.accessPackagesToClass(ModuleSupport.Access.OPEN, null, false, "java.base", "jdk.internal.loader");
             if (JavaVersionUtil.JAVA_SPEC >= 17) {
-                ModuleSupport.exportAndOpenPackageToUnnamed("java.base", "jdk.internal.misc", false);
+                ModuleSupport.accessPackagesToClass(ModuleSupport.Access.OPEN, null, false, "java.base", "jdk.internal.misc");
             }
-            ModuleSupport.exportAndOpenPackageToUnnamed("java.base", "sun.text.spi", false);
-            ModuleSupport.exportAndOpenPackageToUnnamed("java.base", "jdk.internal.org.objectweb.asm", false);
+            ModuleSupport.accessPackagesToClass(ModuleSupport.Access.OPEN, null, false, "java.base", "sun.text.spi");
+            ModuleSupport.accessPackagesToClass(ModuleSupport.Access.OPEN, null, false, "java.base", "jdk.internal.org.objectweb.asm");
             if (JavaVersionUtil.JAVA_SPEC >= 17) {
-                ModuleSupport.exportAndOpenPackageToUnnamed("java.base", "sun.reflect.annotation", false);
-                ModuleSupport.exportAndOpenPackageToUnnamed("java.base", "sun.security.jca", false);
-                ModuleSupport.exportAndOpenPackageToUnnamed("jdk.jdeps", "com.sun.tools.classfile", false);
+                ModuleSupport.accessPackagesToClass(ModuleSupport.Access.OPEN, null, false, "java.base", "sun.reflect.annotation");
+                ModuleSupport.accessPackagesToClass(ModuleSupport.Access.OPEN, null, false, "java.base", "sun.security.jca");
+                ModuleSupport.accessPackagesToClass(ModuleSupport.Access.OPEN, null, false, "jdk.jdeps", "com.sun.tools.classfile");
             }
             NativeImageGeneratorRunner.main(args);
         }

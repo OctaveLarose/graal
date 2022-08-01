@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2018, 2021, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2018, 2022, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * The Universal Permissive License (UPL), Version 1.0
@@ -451,6 +451,8 @@ public class ValueAssert {
                     assertFails(() -> value.getMetaQualifiedName(), UnsupportedOperationException.class);
                     assertFails(() -> value.getMetaSimpleName(), UnsupportedOperationException.class);
                     assertFails(() -> value.isMetaInstance(""), UnsupportedOperationException.class);
+                    assertFalse(value.hasMetaParents());
+                    assertFails(() -> value.getMetaParents(), UnsupportedOperationException.class);
                     break;
                 case ITERABLE:
                     assertFalse(value.hasIterator());
@@ -546,9 +548,10 @@ public class ValueAssert {
                     assertTrue(msg, value.isHostObject());
                     Object hostObject = value.asHostObject();
                     assertFalse(hostObject instanceof Proxy);
+                    boolean isStaticClass = false;
                     if (hasHostAccess && hostObject != null && value.hasMembers() && !java.lang.reflect.Proxy.isProxyClass(hostObject.getClass())) {
                         if (hostObject instanceof Class) {
-                            boolean isStaticClass = value.hasMember("class");
+                            isStaticClass = value.hasMember("class");
                             if (isStaticClass) {
                                 assertClassMembers(value, (Class<?>) hostObject, true);
                             } else {
@@ -566,7 +569,11 @@ public class ValueAssert {
                             }
                         }
                     }
-                    assertEquals(Value.asValue(hostObject), value);
+                    if (isStaticClass) {
+                        assertNotEquals(Value.asValue(hostObject), value);
+                    } else {
+                        assertEquals(Value.asValue(hostObject), value);
+                    }
                     assertEquals(Value.asValue(hostObject).hashCode(), value.hashCode());
 
                     break;
@@ -682,6 +689,30 @@ public class ValueAssert {
                     assertNotNull(value.getMetaQualifiedName());
                     assertNotNull(value.getMetaSimpleName());
                     value.isMetaInstance("");
+                    if (value.hasMetaParents()) {
+                        try {
+                            Value metaParents = value.getMetaParents();
+                            assertTrue(metaParents.hasArrayElements());
+                            long size = metaParents.getArraySize();
+                            for (long i = 0; i < size; i++) {
+                                Value metaParent = metaParents.getArrayElement(i);
+                                assertValueImpl(metaParent, depth + 1, hasHostAccess, detectSupportedTypes(metaParent));
+                            }
+                        } catch (PolyglotException notExpected) {
+                            throw new AssertionError(notExpected);
+                        } catch (UnsupportedOperationException expected) {
+                            // caught expected exception
+                        }
+                    } else {
+                        try {
+                            value.getMetaParents();
+                            fail("should have thrown");
+                        } catch (PolyglotException expected) {
+                            throw new AssertionError(expected);
+                        } catch (UnsupportedOperationException expected) {
+                            // caught expected exception
+                        }
+                    }
                     break;
                 case ITERABLE:
                     assertTrue(msg, value.hasIterator());

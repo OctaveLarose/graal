@@ -45,7 +45,6 @@ import org.graalvm.compiler.nodes.EncodedGraph.EncodedNodeReference;
 import org.graalvm.compiler.nodes.GraphDecoder;
 import org.graalvm.compiler.nodes.StructuredGraph;
 import org.graalvm.compiler.nodes.graphbuilderconf.InvocationPlugin;
-import org.graalvm.util.GuardedAnnotationAccess;
 
 import com.oracle.graal.pointsto.BigBang;
 import com.oracle.graal.pointsto.api.PointstoOptions;
@@ -73,7 +72,6 @@ import jdk.vm.ci.meta.ResolvedJavaType;
 import jdk.vm.ci.meta.SpeculationLog;
 
 public abstract class AnalysisMethod extends AnalysisElement implements WrappedJavaMethod, GraphProvider, OriginalMethodProvider {
-
     private static final AtomicIntegerFieldUpdater<AnalysisMethod> isVirtualRootMethodUpdater = AtomicIntegerFieldUpdater
                     .newUpdater(AnalysisMethod.class, "isVirtualRootMethod");
 
@@ -163,6 +161,24 @@ public abstract class AnalysisMethod extends AnalysisElement implements WrappedJ
         }
         localVariableTable = newLocalVariableTable;
         this.qualifiedName = format("%H.%n(%P)");
+
+        registerSignatureTypes();
+    }
+
+    /**
+     * Lookup the parameters and return type so that they are added to the universe even if the
+     * method is never linked and parsed.
+     */
+    private void registerSignatureTypes() {
+        boolean isStatic = Modifier.isStatic(getModifiers());
+        int parameterCount = getSignature().getParameterCount(!isStatic);
+
+        int offset = isStatic ? 0 : 1;
+        for (int i = offset; i < parameterCount; i++) {
+            getSignature().getParameterType(i - offset, getDeclaringClass());
+        }
+
+        getSignature().getReturnType(getDeclaringClass());
     }
 
     public String getQualifiedName() {
@@ -555,21 +571,6 @@ public abstract class AnalysisMethod extends AnalysisElement implements WrappedJ
     }
 
     @Override
-    public Annotation[] getAnnotations() {
-        return GuardedAnnotationAccess.getAnnotations(wrapped);
-    }
-
-    @Override
-    public Annotation[] getDeclaredAnnotations() {
-        return GuardedAnnotationAccess.getDeclaredAnnotations(wrapped);
-    }
-
-    @Override
-    public <T extends Annotation> T getAnnotation(Class<T> annotationClass) {
-        return GuardedAnnotationAccess.getAnnotation(wrapped, annotationClass);
-    }
-
-    @Override
     public Annotation[][] getParameterAnnotations() {
         return wrapped.getParameterAnnotations();
     }
@@ -658,7 +659,7 @@ public abstract class AnalysisMethod extends AnalysisElement implements WrappedJ
             Object curState = parsedGraphCacheState.get();
 
             /*-
-             * This implements a state machine that ensures parsing is atomic. States: 
+             * This implements a state machine that ensures parsing is atomic. States:
              * 1) unparsed: represented by the String "unparsed".
              * 2) parsing: represented by a locked ReentrantLock object that other threads can wait on.
              * 3) parsed: represented by the ParsedGraph with the parsing result

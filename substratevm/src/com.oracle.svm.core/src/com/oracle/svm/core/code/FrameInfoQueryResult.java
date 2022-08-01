@@ -24,6 +24,9 @@
  */
 package com.oracle.svm.core.code;
 
+import java.lang.module.ModuleDescriptor;
+import java.util.Optional;
+
 import org.graalvm.nativeimage.c.function.CodePointer;
 
 import com.oracle.svm.core.CalleeSavedRegisters;
@@ -32,6 +35,7 @@ import com.oracle.svm.core.hub.DynamicHub;
 import com.oracle.svm.core.log.Log;
 import com.oracle.svm.core.meta.SharedMethod;
 
+import jdk.internal.loader.BuiltinClassLoader;
 import jdk.vm.ci.code.Register;
 import jdk.vm.ci.code.StackSlot;
 import jdk.vm.ci.code.VirtualObject;
@@ -161,6 +165,7 @@ public class FrameInfoQueryResult {
     protected Class<?> sourceClass;
     protected String sourceMethodName;
     protected int sourceLineNumber;
+    protected int methodID;
 
     // Index of sourceClass in CodeInfoDecoder.frameInfoSourceClasses
     protected int sourceClassIndex;
@@ -316,6 +321,13 @@ public class FrameInfoQueryResult {
         return sourceMethodName;
     }
 
+    /**
+     * Returns the unique identification number for the method.
+     */
+    public int getMethodID() {
+        return methodID;
+    }
+
     public String getSourceFileName() {
         return sourceClass != null ? DynamicHub.fromClass(sourceClass).getSourceFileName() : null;
     }
@@ -328,13 +340,24 @@ public class FrameInfoQueryResult {
      * Returns the name and source code location of the method.
      */
     public StackTraceElement getSourceReference() {
-        /*
-         * According to StackTraceElement undefined className is denoted by "", undefined fileName
-         * is denoted by null
-         */
-        final String className = sourceClass != null ? sourceClass.getName() : "";
-        String sourceFileName = sourceClass != null ? DynamicHub.fromClass(sourceClass).getSourceFileName() : null;
-        return new StackTraceElement(className, sourceMethodName, sourceFileName, sourceLineNumber);
+        if (sourceClass == null) {
+            return new StackTraceElement("", sourceMethodName, null, sourceLineNumber);
+        }
+
+        ClassLoader classLoader = sourceClass.getClassLoader();
+        String classLoaderName = null;
+        if (classLoader != null && !(classLoader instanceof BuiltinClassLoader)) {
+            classLoaderName = classLoader.getName();
+        }
+        Module module = sourceClass.getModule();
+        String moduleName = module.getName();
+        String moduleVersion = Optional.ofNullable(module.getDescriptor())
+                        .flatMap(ModuleDescriptor::version)
+                        .map(ModuleDescriptor.Version::toString)
+                        .orElse(null);
+        String className = sourceClass.getName();
+        String sourceFileName = DynamicHub.fromClass(sourceClass).getSourceFileName();
+        return new StackTraceElement(classLoaderName, moduleName, moduleVersion, className, sourceMethodName, sourceFileName, sourceLineNumber);
     }
 
     public boolean isNativeMethod() {
