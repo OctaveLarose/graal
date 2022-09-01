@@ -1143,6 +1143,7 @@ suite = {
                 "name" : "org.graalvm.nativeimage.builder",
                 "exports" : [
                     "com.oracle.svm.hosted                        to java.base",
+                    "com.oracle.svm.hosted.meta                   to org.graalvm.compiler.nodes",
                     "com.oracle.svm.hosted.agent                  to java.instrument",
                     "com.oracle.svm.truffle.api                   to org.graalvm.truffle",
                     "com.oracle.svm.core.option                   to com.oracle.svm_enterprise.ml_dataset",

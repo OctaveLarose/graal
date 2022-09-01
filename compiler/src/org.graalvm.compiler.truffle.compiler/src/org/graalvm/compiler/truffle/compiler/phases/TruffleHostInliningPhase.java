@@ -37,10 +37,13 @@ import java.util.ListIterator;
 import java.util.Objects;
 import java.util.concurrent.atomic.AtomicReference;
 
+import jdk.vm.ci.meta.*;
+import jdk.vm.ci.runtime.JVMCI;
 import org.graalvm.collections.EconomicMap;
 import org.graalvm.collections.EconomicSet;
 import org.graalvm.collections.Equivalence;
 import org.graalvm.collections.UnmodifiableEconomicMap;
+import org.graalvm.compiler.core.common.type.TypeReference;
 import org.graalvm.compiler.core.phases.HighTier;
 import org.graalvm.compiler.debug.DebugContext;
 import org.graalvm.compiler.graph.Node;
@@ -75,12 +78,6 @@ import org.graalvm.compiler.truffle.compiler.PartialEvaluator;
 
 import com.oracle.truffle.api.CompilerDirectives;
 import com.oracle.truffle.api.CompilerDirectives.TruffleBoundary;
-
-import jdk.vm.ci.meta.JavaTypeProfile;
-import jdk.vm.ci.meta.ProfilingInfo;
-import jdk.vm.ci.meta.ResolvedJavaMethod;
-import jdk.vm.ci.meta.ResolvedJavaType;
-import jdk.vm.ci.meta.SpeculationLog;
 
 /**
  * Domain specific inlining phase for Truffle interpreters during host compilation.
@@ -153,6 +150,9 @@ public class TruffleHostInliningPhase extends AbstractInliningPhase {
             return;
         }
 
+        if (graph.shouldBeDevirtualized) {
+            System.out.println("bp");
+        }
         runImpl(new InliningPhaseContext(highTierContext, graph, TruffleCompilerRuntime.getRuntimeIfAvailable(), isBytecodeInterpreterSwitch(method)));
     }
 
@@ -607,6 +607,35 @@ public class TruffleHostInliningPhase extends AbstractInliningPhase {
         }
 
         if (!invoke.getInvokeKind().isDirect() && !shouldInlineMonomorphic(context, call, targetMethod)) {
+            if (context.graph.shouldBeDevirtualized) {
+                MetaAccessProvider metaAccess = JVMCI.getRuntime().getHostJVMCIBackend().getMetaAccess();
+                ResolvedJavaType contextType = TruffleCompilerRuntime.getRuntimeIfAvailable().resolveType(metaAccess, "MultiplicationV2Prim", false);
+                ResolvedJavaType contextType2 = TruffleCompilerRuntime.getRuntimeIfAvailable().resolveType(metaAccess, "trufflesom.primitives.arithmetic.MultiplicationV2Prim", false);
+//                ResolvedJavaType contextType = invoke.getContextType();
+
+                ResolvedJavaType multiplicationv2primclass = context.graph.method().getDeclaringClass().getSuperclass();
+//                HostedInstanceClass klaus = (HostedInstanceClass) graphMethodClass;
+
+
+//                try {
+//                    Class xdd = Class.forName("trufflesom.primitives.arithmetic.MultiplicationV2Prim");
+//                    System.out.println("FOUND " + className1);
+//                } catch (ClassNotFoundException e) {
+//                    System.out.println("ClassNotFound:" + e.getMessage());
+//                }
+
+                TypeReference type = null; // TODO
+
+                if (type != null) {
+                    ResolvedJavaMethod resolvedMethod = type.getType().resolveConcreteMethod(targetMethod, contextType);
+                    if (resolvedMethod != null && (resolvedMethod.canBeStaticallyBound() || type.isExact() || type.getType().isArray())) {
+                        System.out.println("OK: " + resolvedMethod);
+                    }
+                } else {
+                    ;
+//                    System.out.println("type is null");
+                }
+            }
             return false;
         }
 
