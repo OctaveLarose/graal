@@ -37,7 +37,6 @@ import java.util.ListIterator;
 import java.util.Objects;
 import java.util.concurrent.atomic.AtomicReference;
 
-import com.oracle.svm.core.nodes.SubstrateMethodCallTargetNode;
 import jdk.vm.ci.meta.*;
 import jdk.vm.ci.runtime.JVMCI;
 import org.graalvm.collections.EconomicMap;
@@ -607,15 +606,20 @@ public class TruffleHostInliningPhase extends AbstractInliningPhase {
         if (!invoke.getInvokeKind().isDirect() && !shouldInlineMonomorphic(context, call, targetMethod)) {
             if (context.graph.shouldBeDevirtualized) {
                 ResolvedJavaType contextType = context.graph.method().getDeclaringClass().getSuperclass();
-                ResolvedJavaMethod longLongMethod = contextType.getDeclaredMethods()[1];
+                ResolvedJavaMethod overrideMethod = contextType.getDeclaredMethods()[1];
 
-                if (longLongMethod != null && longLongMethod.canBeStaticallyBound()) {
+                if (overrideMethod != null && overrideMethod.canBeStaticallyBound()) {
                     InvokeWithExceptionNode currentInvoke = (InvokeWithExceptionNode) call.invoke;
 
                     NodeInputList<ValueNode> arguments = currentInvoke.callTarget().arguments(); // TODO tweak
-                    ValueNode[] argsArray = (ValueNode[]) arguments.toArray();
+                    ValueNode[] argsArray = new ValueNode[arguments.size()];
+
+                    for (int i = 0; i < arguments.size(); i++) {
+                        argsArray[i] = arguments.get(i);
+                    }
+
                     StampPair returnStamp = currentInvoke.callTarget().returnStamp();
-                    SubstrateMethodCallTargetNode callTargetNode = new SubstrateMethodCallTargetNode(InvokeKind.Special, longLongMethod, argsArray, returnStamp, null, null, null);
+                    CallTargetNode callTargetNode = new MethodCallTargetNode(InvokeKind.Special, overrideMethod, argsArray, returnStamp, null);
                     InvokeNode oursDirectInvoke = new InvokeNode(callTargetNode, currentInvoke.bci());
 
                     currentInvoke.replaceAndDelete(oursDirectInvoke);
