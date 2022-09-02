@@ -37,31 +37,29 @@ import java.util.ListIterator;
 import java.util.Objects;
 import java.util.concurrent.atomic.AtomicReference;
 
+import com.oracle.svm.core.nodes.SubstrateMethodCallTargetNode;
 import jdk.vm.ci.meta.*;
 import jdk.vm.ci.runtime.JVMCI;
 import org.graalvm.collections.EconomicMap;
 import org.graalvm.collections.EconomicSet;
 import org.graalvm.collections.Equivalence;
 import org.graalvm.collections.UnmodifiableEconomicMap;
+import org.graalvm.compiler.core.common.type.Stamp;
+import org.graalvm.compiler.core.common.type.StampPair;
 import org.graalvm.compiler.core.common.type.TypeReference;
 import org.graalvm.compiler.core.phases.HighTier;
 import org.graalvm.compiler.debug.DebugContext;
 import org.graalvm.compiler.graph.Node;
-import org.graalvm.compiler.nodes.AbstractBeginNode;
+import org.graalvm.compiler.graph.NodeInputList;
+import org.graalvm.compiler.nodes.*;
 import org.graalvm.compiler.nodes.CallTargetNode.InvokeKind;
-import org.graalvm.compiler.nodes.FixedGuardNode;
-import org.graalvm.compiler.nodes.FixedNode;
-import org.graalvm.compiler.nodes.IfNode;
-import org.graalvm.compiler.nodes.Invoke;
-import org.graalvm.compiler.nodes.LogicNode;
-import org.graalvm.compiler.nodes.StructuredGraph;
-import org.graalvm.compiler.nodes.ValueNode;
 import org.graalvm.compiler.nodes.cfg.Block;
 import org.graalvm.compiler.nodes.cfg.ControlFlowGraph;
 import org.graalvm.compiler.nodes.graphbuilderconf.GraphBuilderConfiguration.Plugins;
 import org.graalvm.compiler.nodes.graphbuilderconf.GraphBuilderContext;
 import org.graalvm.compiler.nodes.graphbuilderconf.InlineInvokePlugin;
 import org.graalvm.compiler.nodes.java.MethodCallTargetNode;
+import org.graalvm.compiler.nodes.type.StampTool;
 import org.graalvm.compiler.options.Option;
 import org.graalvm.compiler.options.OptionKey;
 import org.graalvm.compiler.options.OptionValues;
@@ -608,32 +606,20 @@ public class TruffleHostInliningPhase extends AbstractInliningPhase {
 
         if (!invoke.getInvokeKind().isDirect() && !shouldInlineMonomorphic(context, call, targetMethod)) {
             if (context.graph.shouldBeDevirtualized) {
-                MetaAccessProvider metaAccess = JVMCI.getRuntime().getHostJVMCIBackend().getMetaAccess();
-                ResolvedJavaType contextType = TruffleCompilerRuntime.getRuntimeIfAvailable().resolveType(metaAccess, "MultiplicationV2Prim", false);
-                ResolvedJavaType contextType2 = TruffleCompilerRuntime.getRuntimeIfAvailable().resolveType(metaAccess, "trufflesom.primitives.arithmetic.MultiplicationV2Prim", false);
-//                ResolvedJavaType contextType = invoke.getContextType();
+                ResolvedJavaType contextType = context.graph.method().getDeclaringClass().getSuperclass();
+                ResolvedJavaMethod longLongMethod = contextType.getDeclaredMethods()[1];
 
-                ResolvedJavaType multiplicationv2primclass = context.graph.method().getDeclaringClass().getSuperclass();
-//                HostedInstanceClass klaus = (HostedInstanceClass) graphMethodClass;
+                if (longLongMethod != null && longLongMethod.canBeStaticallyBound()) {
+                    InvokeWithExceptionNode currentInvoke = (InvokeWithExceptionNode) call.invoke;
 
+                    NodeInputList<ValueNode> arguments = currentInvoke.callTarget().arguments(); // TODO tweak
+                    ValueNode[] argsArray = (ValueNode[]) arguments.toArray();
+                    StampPair returnStamp = currentInvoke.callTarget().returnStamp();
+                    SubstrateMethodCallTargetNode callTargetNode = new SubstrateMethodCallTargetNode(InvokeKind.Special, longLongMethod, argsArray, returnStamp, null, null, null);
+                    InvokeNode oursDirectInvoke = new InvokeNode(callTargetNode, currentInvoke.bci());
 
-//                try {
-//                    Class xdd = Class.forName("trufflesom.primitives.arithmetic.MultiplicationV2Prim");
-//                    System.out.println("FOUND " + className1);
-//                } catch (ClassNotFoundException e) {
-//                    System.out.println("ClassNotFound:" + e.getMessage());
-//                }
-
-                TypeReference type = null; // TODO
-
-                if (type != null) {
-                    ResolvedJavaMethod resolvedMethod = type.getType().resolveConcreteMethod(targetMethod, contextType);
-                    if (resolvedMethod != null && (resolvedMethod.canBeStaticallyBound() || type.isExact() || type.getType().isArray())) {
-                        System.out.println("OK: " + resolvedMethod);
-                    }
-                } else {
-                    ;
-//                    System.out.println("type is null");
+                    currentInvoke.replaceAndDelete(oursDirectInvoke);
+                    return true;
                 }
             }
             return false;
