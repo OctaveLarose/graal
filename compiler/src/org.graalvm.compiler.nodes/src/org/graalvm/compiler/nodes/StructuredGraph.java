@@ -491,7 +491,7 @@ public final class StructuredGraph extends Graph implements JavaMethodContext {
         if (method != null && method.getDeclaringClass().getName().startsWith("Ltrufflesom/primitives/arithmetic/MultiplicationV2PrimFactory") ) {
 //            System.out.println(method.getName());
             if (method.getName().equals("executeGeneric")) {
-                System.out.println("Method " + method.getName() + " found");
+//                System.out.println("graph for method " + method.getDeclaringClass().getName() + method.getName() + " found");
                 this.shouldBeDevirtualized = true;
             }
         }

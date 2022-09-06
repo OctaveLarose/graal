@@ -445,8 +445,8 @@ public class InliningUtil extends ValueMergeUtil {
         EconomicMap<Node, Node> duplicates;
         InliningLog inliningLog = graph.getInliningLog();
         try (InliningLog.UpdateScope scope = InliningLog.openDefaultUpdateScope(inliningLog)) {
-            if (graph.method().getName().equals("executeLong") && graph.method().getDeclaringClass().getName().startsWith("Ltrufflesom/primitives/arithmetic/MultiplicationV2PrimFactory"))
-                System.out.println("bp");
+//            if (graph.method().getName().equals("executeLong") && graph.method().getDeclaringClass().getName().startsWith("Ltrufflesom/primitives/arithmetic/MultiplicationV2PrimFactory"))
+//                System.out.println("bp in inliningutil");
             duplicates = graph.addDuplicates(nodes, inlineGraph, inlineGraph.getNodeCount(), localReplacement);
             graph.notifyInliningDecision(invoke, true, phase, duplicates, inlineGraph.getInliningLog(), reason);
         }

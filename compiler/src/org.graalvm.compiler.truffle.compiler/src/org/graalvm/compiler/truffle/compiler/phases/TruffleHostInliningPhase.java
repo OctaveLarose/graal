@@ -603,63 +603,33 @@ public class TruffleHostInliningPhase extends AbstractInliningPhase {
             return false;
         }
 
-//        if (context.graph.method().getDeclaringClass().getName().startsWith("Ltrufflesom/primitives/arithmetic/MultiplicationV2PrimFactory") ) {
-//            System.out.println("bp"); // TODO
-//        }
-
         if (!invoke.getInvokeKind().isDirect() && !shouldInlineMonomorphic(context, call, targetMethod)) {
-            if (context.graph.shouldBeDevirtualized) {
-//                ResolvedJavaType contextType = context.graph.method().getDeclaringClass().getSuperclass(); // for MultiplicationV2PRim
+            if (context.graph.shouldBeDevirtualized) { // If the graph's root method is MultiplicationV2PrimGen.executeGeneric
+//                ResolvedJavaType contextType = context.graph.method().getDeclaringClass().getSuperclass(); // for MultiplicationV2Prim itself
                 ResolvedJavaType contextType = context.graph.method().getDeclaringClass();
                 ResolvedJavaMethod overrideMethod = null;
 
-                for (ResolvedJavaMethod method: contextType.getDeclaredMethods()) {
-//                    System.out.println(method.getName());
-//                    if (method.getName().contains("long_long0")) {
+                for (ResolvedJavaMethod method : contextType.getDeclaredMethods()) {
                     if (method.getName().contains("executeLong")) {
                         overrideMethod = method;
                         break;
                     }
                 }
-//                System.out.println("method: " + overrideMethod);
 
-                if (overrideMethod == null)
-                    System.out.println("unreachable: method not found");
-//                else {
-//                    System.out.println("param override:" + overrideMethod.getParameters());
-//                    System.out.println("arguments og:" + call.invoke.callTarget().arguments());
-//                }
-
-                if (overrideMethod != null && overrideMethod.canBeStaticallyBound()) {
-
-//                    NodeInputList<ValueNode> arguments = currentInvoke.callTarget().arguments();
-//                    ValueNode[] argsArray = new ValueNode[arguments.size()];
-//
-//                    for (int i = 0; i < arguments.size() ; i++) {
-//                        argsArray[i] = arguments.get(i);
-//                    }
-//
-//                    StampPair returnStamp = currentInvoke.callTarget().returnStamp();
-//                    CallTargetNode callTargetNode = new MethodCallTargetNode(InvokeKind.Special, overrideMethod, argsArray, returnStamp, null);
-//                    InvokeWithExceptionNode oursDirectInvoke = new InvokeWithExceptionNode(callTargetNode, null, currentInvoke.bci());
-
-//                    InliningUtil.replaceInvokeCallTarget(currentInvoke, oursDirectInvoke);
-//                    context.graph.add(oursDirectInvoke);
-
-                    InliningUtil.replaceInvokeCallTarget(invoke, context.graph, InvokeKind.Special, overrideMethod);
-
-//                    context.graph.add(oursDirectInvoke);
-//                    context.graph.replaceWithExceptionSplit(currentInvoke, oursDirectInvoke);
-//                    MethodCallTargetNode oldCallTarget = (MethodCallTargetNode) invoke.callTarget();
-//                    MethodCallTargetNode newCallTarget = graph.add(new MethodCallTargetNode(invokeKind, targetMethod, oldCallTarget.arguments().toArray(ValueNode.EMPTY_ARRAY), oldCallTarget.returnStamp(),
-//                            oldCallTarget.getTypeProfile()));
-//                    call.invoke.asNode().replaceFirstInput(currentInvoke, oursDirectInvoke);
-//                    currentInvoke.replaceAndDelete(oursDirectInvoke);
-                    return true;
-                } else {
-                    System.out.println("should never be reached");
+                if (overrideMethod == null) {
+                    System.out.println("should be unreachable: method not found");
+                    return false;
                 }
+
+                if (!overrideMethod.canBeStaticallyBound()) {
+                    System.out.println("should be unreachable: method can't be statically bound");
+                    return false;
+                }
+
+                InliningUtil.replaceInvokeCallTarget(invoke, context.graph, InvokeKind.Special, overrideMethod);
+                return true;
             }
+
             return false;
         }
 
@@ -925,10 +895,12 @@ public class TruffleHostInliningPhase extends AbstractInliningPhase {
         }
         StructuredGraph inlineGraph = lookupGraph(context, targetMethod);
         AtomicReference<UnmodifiableEconomicMap<Node, Node>> duplicates = new AtomicReference<>();
+//        System.out.println(targetMethod.getDeclaringClass().getName() + " " + targetMethod.getName());
         canonicalizableNodes.addAll(InliningUtil.inlineForCanonicalization(invoke, inlineGraph, true, targetMethod,
                         (d) -> duplicates.set(d),
                         "Truffle Host Inlining",
                         "Truffle Host Inlining"));
+//        System.out.println("success");
         return duplicates.get();
     }
 
