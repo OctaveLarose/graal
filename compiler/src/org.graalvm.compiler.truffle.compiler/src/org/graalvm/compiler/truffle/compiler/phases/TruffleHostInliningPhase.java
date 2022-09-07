@@ -604,9 +604,18 @@ public class TruffleHostInliningPhase extends AbstractInliningPhase {
         }
 
         if (!invoke.getInvokeKind().isDirect() && !shouldInlineMonomorphic(context, call, targetMethod)) {
-            if (context.graph.shouldBeDevirtualized) { // If the graph's root method is MultiplicationV2PrimGen.executeGeneric
+            ValueNode valueNode = null;
+            try {
+                valueNode = (ValueNode) call.invoke;
+            } catch (ClassCastException e) {
+                return false;
+            }
+            StructuredGraph graph = valueNode.graph();
+
+            if (graph.shouldBeDevirtualized) {
+//            if (context.graph.shouldBeDevirtualized) { // If the graph's root method is MultiplicationV2PrimGen.executeGeneric
 //                ResolvedJavaType contextType = context.graph.method().getDeclaringClass().getSuperclass(); // for MultiplicationV2Prim itself
-                ResolvedJavaType contextType = context.graph.method().getDeclaringClass();
+                ResolvedJavaType contextType = graph.method().getDeclaringClass();
                 ResolvedJavaMethod overrideMethod = null;
 
                 for (ResolvedJavaMethod method : contextType.getDeclaredMethods()) {
@@ -626,7 +635,10 @@ public class TruffleHostInliningPhase extends AbstractInliningPhase {
                     return false;
                 }
 
+                System.out.println(invoke.getTargetMethod().getDeclaringClass().getName() + invoke.getTargetMethod().getName());
+
                 InliningUtil.replaceInvokeCallTarget(invoke, context.graph, InvokeKind.Special, overrideMethod);
+                call.children = new ArrayList<>();
                 return true;
             }
 
