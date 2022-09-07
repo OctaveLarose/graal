@@ -640,20 +640,22 @@ public class TruffleHostInliningPhase extends AbstractInliningPhase {
                 if (invoke.getTargetMethod().getName().equals("executeDouble") || invoke.getTargetMethod().getName().equals("executeGeneric"))
                     return false;
 
-//                System.out.println(invoke.getTargetMethod().getDeclaringClass().getName() + invoke.getTargetMethod().getName());
-
                 InliningUtil.replaceInvokeCallTarget(invoke, context.graph, InvokeKind.Special, overrideMethod);
                 MethodCallTargetNode oldCallTarget = (MethodCallTargetNode) invoke.callTarget();
-//                StampPair returnStamp = oldCallTarget.returnStamp();
                 IntegerStamp integerStamp = IntegerStamp.create(Long.SIZE, Long.MIN_VALUE, Long.MAX_VALUE);
-                StampPair returnStamp = StampPair.create(integerStamp, integerStamp);
-                MethodCallTargetNode newCallTarget = graph.add(
-                        new MethodCallTargetNode(InvokeKind.Special, overrideMethod, oldCallTarget.arguments().toArray(ValueNode.EMPTY_ARRAY),
-                        returnStamp,
-                        oldCallTarget.getTypeProfile()));
+                StampPair returnStamp = StampPair.create(integerStamp, null);
+
+                MethodCallTargetNode newCallTarget = graph.add(new MethodCallTargetNode(
+                        InvokeKind.Special, overrideMethod, oldCallTarget.arguments().toArray(ValueNode.EMPTY_ARRAY),
+                        returnStamp, oldCallTarget.getTypeProfile())
+                );
                 invoke.asNode().replaceFirstInput(oldCallTarget, newCallTarget);
+
+                // TODO throws an error when compiling otherwise, but this feels like the wrong way forward.
+                // afaik the CallTree for M...PrimV2.executeLong never has children anyway, but should get inlined? not sure
                 if (call.children == null)
                     call.children = new ArrayList<>();
+
                 return true;
             }
 
