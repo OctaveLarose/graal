@@ -43,6 +43,7 @@ import org.graalvm.collections.EconomicMap;
 import org.graalvm.collections.EconomicSet;
 import org.graalvm.collections.Equivalence;
 import org.graalvm.collections.UnmodifiableEconomicMap;
+import org.graalvm.compiler.core.common.type.IntegerStamp;
 import org.graalvm.compiler.core.common.type.Stamp;
 import org.graalvm.compiler.core.common.type.StampPair;
 import org.graalvm.compiler.core.common.type.TypeReference;
@@ -635,10 +636,24 @@ public class TruffleHostInliningPhase extends AbstractInliningPhase {
                     return false;
                 }
 
-                System.out.println(invoke.getTargetMethod().getDeclaringClass().getName() + invoke.getTargetMethod().getName());
+                // should be removed though
+                if (invoke.getTargetMethod().getName().equals("executeDouble") || invoke.getTargetMethod().getName().equals("executeGeneric"))
+                    return false;
+
+//                System.out.println(invoke.getTargetMethod().getDeclaringClass().getName() + invoke.getTargetMethod().getName());
 
                 InliningUtil.replaceInvokeCallTarget(invoke, context.graph, InvokeKind.Special, overrideMethod);
-                call.children = new ArrayList<>();
+                MethodCallTargetNode oldCallTarget = (MethodCallTargetNode) invoke.callTarget();
+//                StampPair returnStamp = oldCallTarget.returnStamp();
+                IntegerStamp integerStamp = IntegerStamp.create(Long.SIZE, Long.MIN_VALUE, Long.MAX_VALUE);
+                StampPair returnStamp = StampPair.create(integerStamp, integerStamp);
+                MethodCallTargetNode newCallTarget = graph.add(
+                        new MethodCallTargetNode(InvokeKind.Special, overrideMethod, oldCallTarget.arguments().toArray(ValueNode.EMPTY_ARRAY),
+                        returnStamp,
+                        oldCallTarget.getTypeProfile()));
+                invoke.asNode().replaceFirstInput(oldCallTarget, newCallTarget);
+                if (call.children == null)
+                    call.children = new ArrayList<>();
                 return true;
             }
 
@@ -907,12 +922,10 @@ public class TruffleHostInliningPhase extends AbstractInliningPhase {
         }
         StructuredGraph inlineGraph = lookupGraph(context, targetMethod);
         AtomicReference<UnmodifiableEconomicMap<Node, Node>> duplicates = new AtomicReference<>();
-//        System.out.println(targetMethod.getDeclaringClass().getName() + " " + targetMethod.getName());
         canonicalizableNodes.addAll(InliningUtil.inlineForCanonicalization(invoke, inlineGraph, true, targetMethod,
                         (d) -> duplicates.set(d),
                         "Truffle Host Inlining",
                         "Truffle Host Inlining"));
-//        System.out.println("success");
         return duplicates.get();
     }
 
