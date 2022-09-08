@@ -611,12 +611,12 @@ public class TruffleHostInliningPhase extends AbstractInliningPhase {
             } catch (ClassCastException e) {
                 return false;
             }
-            StructuredGraph graph = valueNode.graph();
+            StructuredGraph invokeGraph = valueNode.graph();
 
-            if (graph.shouldBeDevirtualized) {
+            if (invokeGraph.shouldBeDevirtualized) {
 //            if (context.graph.shouldBeDevirtualized) { // If the graph's root method is MultiplicationV2PrimGen.executeGeneric
 //                ResolvedJavaType contextType = context.graph.method().getDeclaringClass().getSuperclass(); // for MultiplicationV2Prim itself
-                ResolvedJavaType contextType = graph.method().getDeclaringClass();
+                ResolvedJavaType contextType = invokeGraph.method().getDeclaringClass();
                 ResolvedJavaMethod overrideMethod = null;
 
                 for (ResolvedJavaMethod method : contextType.getDeclaredMethods()) {
@@ -636,7 +636,7 @@ public class TruffleHostInliningPhase extends AbstractInliningPhase {
                     return false;
                 }
 
-                // should be removed though
+                // Only replacing ExpressionNode.executeLong with MultPrim.executeLong for now, so avoiding that lookup. This check should be removed later though, but it breaks
                 if (invoke.getTargetMethod().getName().equals("executeDouble") || invoke.getTargetMethod().getName().equals("executeGeneric"))
                     return false;
 
@@ -645,18 +645,19 @@ public class TruffleHostInliningPhase extends AbstractInliningPhase {
                 IntegerStamp integerStamp = IntegerStamp.create(Long.SIZE, Long.MIN_VALUE, Long.MAX_VALUE);
                 StampPair returnStamp = StampPair.create(integerStamp, null);
 
-                MethodCallTargetNode newCallTarget = graph.add(new MethodCallTargetNode(
+                MethodCallTargetNode newCallTarget = context.graph.add(new MethodCallTargetNode(
                         InvokeKind.Special, overrideMethod, oldCallTarget.arguments().toArray(ValueNode.EMPTY_ARRAY),
                         returnStamp, oldCallTarget.getTypeProfile())
                 );
+
+                // TODO fix, it segfaults
                 invoke.asNode().replaceFirstInput(oldCallTarget, newCallTarget);
 
-                // TODO throws an error when compiling otherwise, but this feels like the wrong way forward.
-                // afaik the CallTree for M...PrimV2.executeLong never has children anyway, but should get inlined? not sure
-                if (call.children == null)
-                    call.children = new ArrayList<>();
+                int round = 0;
+                int exploreBudget = 10000;
+                call.children = exploreGraph(context, null, call, lookupGraph(context, call.getTargetMethod()), round, exploreBudget, 0);
 
-                return true;
+                return true; // Also breaks if it returns false
             }
 
             return false;
