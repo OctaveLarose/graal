@@ -1582,6 +1582,7 @@ suite = {
         "org.graalvm.compiler.truffle.options",
         "org.graalvm.compiler.core",
         "org.graalvm.compiler.replacements",
+        "org.graalvm.compiler.truffle.runtime" # TODO I ADDED THAT
       ],
       "uses" : [
         "org.graalvm.compiler.truffle.compiler.substitutions.GraphBuilderInvocationPluginProvider",

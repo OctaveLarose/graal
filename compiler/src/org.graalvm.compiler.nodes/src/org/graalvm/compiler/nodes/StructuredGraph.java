@@ -471,6 +471,8 @@ public final class StructuredGraph extends Graph implements JavaMethodContext {
 
     public boolean shouldBeDevirtualized = false;
 
+    public static ResolvedJavaMethod argumentReadV2NodeExecuteLong;
+
     private StructuredGraph(String name,
                     ResolvedJavaMethod method,
                     int entryBCI,
@@ -490,9 +492,14 @@ public final class StructuredGraph extends Graph implements JavaMethodContext {
         this.rootMethod = method;
         if (method != null && method.getDeclaringClass().getName().startsWith("Ltrufflesom/primitives/arithmetic/MultiplicationV2PrimFactory") ) {
 //            System.out.println(method.getName());
-            if (method.getName().equals("executeGeneric")) {
+            if (method.getName().equals("executeGeneric_long_long0")) {
 //                System.out.println("graph for method " + method.getDeclaringClass().getName() + method.getName() + " found");
                 this.shouldBeDevirtualized = true;
+            }
+        }
+        if (method != null && method.getDeclaringClass().getName().startsWith("Ltrufflesom/interpreter/nodes/ArgumentReadV2Node") ) {
+            if (method.getName().equals("executeLong")) {
+                argumentReadV2NodeExecuteLong = method;
             }
         }
         this.graphId = uniqueGraphIds.incrementAndGet();
