@@ -27,14 +27,7 @@ package org.graalvm.compiler.nodes;
 import static jdk.vm.ci.services.Services.IS_BUILDING_NATIVE_IMAGE;
 import static jdk.vm.ci.services.Services.IS_IN_NATIVE_IMAGE;
 
-import java.util.ArrayList;
-import java.util.Collections;
-import java.util.EnumSet;
-import java.util.Iterator;
-import java.util.List;
-import java.util.Map;
-import java.util.SortedSet;
-import java.util.TreeSet;
+import java.util.*;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.Consumer;
 import java.util.stream.Collectors;
@@ -469,9 +462,8 @@ public final class StructuredGraph extends Graph implements JavaMethodContext {
 
     public static final boolean NO_PROFILING_INFO = false;
 
-    public boolean shouldBeDevirtualized = false;
-
-    public static ResolvedJavaMethod argumentReadV2NodeExecuteLong;
+    public static Map<String, ResolvedJavaMethod> methodMap = new WeakHashMap<>();
+    public boolean shouldBeDevirtualized;
 
     private StructuredGraph(String name,
                     ResolvedJavaMethod method,
@@ -490,18 +482,19 @@ public final class StructuredGraph extends Graph implements JavaMethodContext {
         super(name, options, debug, trackNodeSourcePosition);
         this.setStart(add(new StartNode()));
         this.rootMethod = method;
+
         if (method != null && method.getDeclaringClass().getName().startsWith("Ltrufflesom/primitives/arithmetic/MultiplicationV2PrimFactory") ) {
-//            System.out.println(method.getName());
             if (method.getName().equals("executeGeneric_long_long0")) {
-//                System.out.println("graph for method " + method.getDeclaringClass().getName() + method.getName() + " found");
                 this.shouldBeDevirtualized = true;
             }
         }
-        if (method != null && method.getDeclaringClass().getName().startsWith("Ltrufflesom/interpreter/nodes/ArgumentReadV2Node") ) {
-            if (method.getName().equals("executeLong")) {
-                argumentReadV2NodeExecuteLong = method;
-            }
+
+        if (method != null && !method.getClass().getName().contains("PointsToAnalysisMethod")
+                && method.getDeclaringClass().getName().startsWith("Ltrufflesom/interpreter/nodes") && !method.getName().equals("<clinit>")) {
+            String keyName = method.getDeclaringClass().getName() + method.getName();
+            methodMap.putIfAbsent(keyName, method);
         }
+
         this.graphId = uniqueGraphIds.incrementAndGet();
         this.compilationId = compilationId;
         this.entryBCI = entryBCI;
