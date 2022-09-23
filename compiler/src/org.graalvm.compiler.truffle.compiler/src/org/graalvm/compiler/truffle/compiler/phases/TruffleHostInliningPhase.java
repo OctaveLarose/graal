@@ -606,61 +606,8 @@ public class TruffleHostInliningPhase extends AbstractInliningPhase {
         }
 
         if (!invoke.getInvokeKind().isDirect() && !shouldInlineMonomorphic(context, call, targetMethod)) {
-//            ValueNode valueNode = null;
-            // marker
-//            try {
-//                valueNode = (ValueNode) call.invoke;
-//            } catch (ClassCastException e) {
-//                return false;
-//            }
-//            StructuredGraph invokeGraph = valueNode.graph();
-
             if (context.graph.shouldBeDevirtualized) {
-//                if (!context.graph.shouldBeDevirtualized)
-//                    System.out.println("never ever happens but why can the opposite?");
-
-//                if (context.graph.shouldBeDevirtualized)
-//                    if (!invokeGraph.shouldBeDevirtualized)
-//                        System.out.println("this triggers");
-
-//            if (context.graph.shouldBeDevirtualized) { // If the graph's root method is MultiplicationV2PrimGen.executeGeneric
-//                ResolvedJavaType contextType = context.graph.method().getDeclaringClass().getSuperclass(); // for MultiplicationV2Prim itself
-                ResolvedJavaType contextType = null; //context.graph.method().getDeclaringClass();
-                ResolvedJavaMethod overrideMethod = null; // needs to be ArgumentReadV2Node.LocalArgumentReadNode.executeLong();
-
-//                try {
-//                    var classNameVal = Class.forName("trufflesom.interpreter.nodes.ArgumentReadV2Node");
-//                    System.out.println("classnameval: " + classNameVal);
-//                } catch (Exception e) {
-//                    System.out.println(e);
-//                }
-
-                var providers = context.highTierContext.getProviders();
-                MetaAccessProvider metaAccessProvider = providers.getMetaAccess();
-
-                if (StructuredGraph.argumentReadV2NodeExecuteLong != null)
-                    System.out.println("OK c'est faisable");
-                else
-                    System.out.println("rip bebou");
-
-                overrideMethod = StructuredGraph.argumentReadV2NodeExecuteLong;
-//                ResolvedJavaType argv2type = GraalTruffleRuntime.getRuntime().resolveType(metaAccessProvider, "trufflesom.interpreter.nodes.ArgumentReadV2Node", false);
-//                if (argv2type != null)
-//                    System.out.println("OMG:" + argv2type);
-//                else
-//                    System.out.println("c non");
-//                argv2type = GraalTruffleRuntime.getRuntime().resolveType(metaAccessProvider, "ArgumentReadV2Node", false);
-//                if (argv2type != null)
-//                    System.out.println("OMG:" + argv2type);
-//                else
-//                    System.out.println("c non");
-
-//                for (ResolvedJavaMethod method : contextType.getDeclaredMethods()) {
-//                    if (method.getName().contains("executeLong")) {
-//                        overrideMethod = method;
-//                        break;
-//                    }
-//                }
+                ResolvedJavaMethod overrideMethod = StructuredGraph.argumentReadV2NodeExecuteLong;
 
                 if (overrideMethod == null) {
                     System.out.println("should be unreachable: method not found");
@@ -671,18 +618,6 @@ public class TruffleHostInliningPhase extends AbstractInliningPhase {
                     System.out.println("should be unreachable: method can't be statically bound");
                     return false;
                 }
-
-                // Only replacing ExpressionNode.executeLong with MultPrim.executeLong for now, so avoiding that lookup. This check should be removed later though, but it breaks
-                if (invoke.getTargetMethod().getName().equals("executeDouble") || invoke.getTargetMethod().getName().equals("executeGeneric"))
-                    return false;
-
-                // prints "Ltrufflesom/primitives/arithmetic/MultiplicationV2PrimFactory$MultiplicationV2PrimNodeGen;executeGeneric"
-//                System.out.println(invokeGraph.method().getDeclaringClass().getName() + invokeGraph.method().getName());
-
-                // prints Ltrufflesom/interpreter/nodes/ExpressionNode;executeLong
-//                System.out.println(invoke.getTargetMethod().getDeclaringClass().getName() + invoke.getTargetMethod().getName());
-
-//                System.out.println();
 
                 InliningUtil.replaceInvokeCallTarget(invoke, context.graph, InvokeKind.Special, overrideMethod);
                 MethodCallTargetNode oldCallTarget = (MethodCallTargetNode) invoke.callTarget();
@@ -695,12 +630,13 @@ public class TruffleHostInliningPhase extends AbstractInliningPhase {
                 );
                 
                 invoke.asNode().replaceFirstInput(oldCallTarget, newCallTarget);
+                System.out.println("Successful replacement");
 
                 int round = 0;
                 int exploreBudget = 10000;
-                call.children = exploreGraph(context, null, call, lookupGraph(context, call.getTargetMethod()), round, exploreBudget, 0);
+                call.children = null;//exploreGraph(context, null, call, lookupGraph(context, call.getTargetMethod()), round, exploreBudget, 0);
 
-                return true; // Also breaks if it returns false
+                return true;
             }
 
             return false;
