@@ -469,9 +469,13 @@ public final class StructuredGraph extends Graph implements JavaMethodContext {
 
     public static final boolean NO_PROFILING_INFO = false;
 
-    public boolean shouldBeDevirtualized = false;
+    public boolean shouldBeDevirtualizedLong = false;
+
+    public boolean shouldBeDevirtualizedDouble = false;
 
     public static ResolvedJavaMethod argumentReadV2NodeExecuteLong;
+
+    public static ResolvedJavaMethod argumentReadV2NodeExecuteDouble;
 
     private StructuredGraph(String name,
                     ResolvedJavaMethod method,
@@ -494,12 +498,20 @@ public final class StructuredGraph extends Graph implements JavaMethodContext {
 //            System.out.println(method.getName());
             if (method.getName().equals("executeGeneric_long_long0")) {
 //                System.out.println("graph for method " + method.getDeclaringClass().getName() + method.getName() + " found");
-                this.shouldBeDevirtualized = true;
+                this.shouldBeDevirtualizedLong = true;
+            }
+
+            if (method.getName().equals("executeGeneric_double_double2")) {
+//                System.out.println("graph for method " + method.getDeclaringClass().getName() + method.getName() + " found");
+                this.shouldBeDevirtualizedDouble = true;
             }
         }
         if (method != null && method.getDeclaringClass().getName().startsWith("Ltrufflesom/interpreter/nodes/ArgumentReadV2Node") ) {
             if (method.getName().equals("executeLong")) {
                 argumentReadV2NodeExecuteLong = method;
+            }
+            if (method.getName().equals("executeDouble")) {
+                argumentReadV2NodeExecuteDouble = method;
             }
         }
         this.graphId = uniqueGraphIds.incrementAndGet();

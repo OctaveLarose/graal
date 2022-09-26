@@ -149,9 +149,6 @@ public class TruffleHostInliningPhase extends AbstractInliningPhase {
             return;
         }
 
-        if (graph.shouldBeDevirtualized) {
-            System.out.println("host inlining phase for " + graph.method());
-        }
         runImpl(new InliningPhaseContext(highTierContext, graph, TruffleCompilerRuntime.getRuntimeIfAvailable(), isBytecodeInterpreterSwitch(method)));
     }
 
@@ -606,8 +603,13 @@ public class TruffleHostInliningPhase extends AbstractInliningPhase {
         }
 
         if (!invoke.getInvokeKind().isDirect() && !shouldInlineMonomorphic(context, call, targetMethod)) {
-            if (context.graph.shouldBeDevirtualized) {
-                ResolvedJavaMethod overrideMethod = StructuredGraph.argumentReadV2NodeExecuteLong;
+            if (context.graph.shouldBeDevirtualizedLong || context.graph.shouldBeDevirtualizedDouble) {
+                ResolvedJavaMethod overrideMethod = null;
+
+                if (context.graph.shouldBeDevirtualizedLong)
+                    overrideMethod = StructuredGraph.argumentReadV2NodeExecuteLong;
+                else if (context.graph.shouldBeDevirtualizedDouble)
+                    overrideMethod = StructuredGraph.argumentReadV2NodeExecuteDouble;
 
                 if (overrideMethod == null) {
                     System.out.println("should be unreachable: method not found");
