@@ -27,14 +27,7 @@ package org.graalvm.compiler.nodes;
 import static jdk.vm.ci.services.Services.IS_BUILDING_NATIVE_IMAGE;
 import static jdk.vm.ci.services.Services.IS_IN_NATIVE_IMAGE;
 
-import java.util.ArrayList;
-import java.util.Collections;
-import java.util.EnumSet;
-import java.util.Iterator;
-import java.util.List;
-import java.util.Map;
-import java.util.SortedSet;
-import java.util.TreeSet;
+import java.util.*;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.Consumer;
 import java.util.stream.Collectors;
@@ -506,14 +499,18 @@ public final class StructuredGraph extends Graph implements JavaMethodContext {
                 this.shouldBeDevirtualizedDouble = true;
             }
         }
+
         if (method != null && method.getDeclaringClass().getName().startsWith("Ltrufflesom/interpreter/nodes/ArgumentReadV2Node") ) {
-            if (method.getName().equals("executeLong")) {
-                argumentReadV2NodeExecuteLong = method;
-            }
-            if (method.getName().equals("executeDouble")) {
-                argumentReadV2NodeExecuteDouble = method;
+            // those two are fetched that way since originally those methods were never called otherwise, so there was no associated graph.
+            // however it turns out that i had to call them anyway, otherwise it wouldn't work, so they could be fetched like the previous one honestly
+            for (var meth: method.getDeclaringClass().getDeclaredMethods()) {
+                if (meth.getName().equals("doLong"))
+                    argumentReadV2NodeExecuteLong = meth;
+                if (meth.getName().equals("doDouble"))
+                    argumentReadV2NodeExecuteDouble = meth;
             }
         }
+
         this.graphId = uniqueGraphIds.incrementAndGet();
         this.compilationId = compilationId;
         this.entryBCI = entryBCI;
