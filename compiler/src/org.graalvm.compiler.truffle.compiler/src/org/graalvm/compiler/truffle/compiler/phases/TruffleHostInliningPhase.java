@@ -29,12 +29,7 @@ import static org.graalvm.compiler.phases.common.DeadCodeEliminationPhase.Option
 
 import java.io.ByteArrayOutputStream;
 import java.io.PrintStream;
-import java.util.ArrayList;
-import java.util.Collection;
-import java.util.Collections;
-import java.util.List;
-import java.util.ListIterator;
-import java.util.Objects;
+import java.util.*;
 import java.util.concurrent.atomic.AtomicReference;
 
 import jdk.vm.ci.meta.*;
@@ -43,10 +38,7 @@ import org.graalvm.collections.EconomicMap;
 import org.graalvm.collections.EconomicSet;
 import org.graalvm.collections.Equivalence;
 import org.graalvm.collections.UnmodifiableEconomicMap;
-import org.graalvm.compiler.core.common.type.IntegerStamp;
-import org.graalvm.compiler.core.common.type.Stamp;
-import org.graalvm.compiler.core.common.type.StampPair;
-import org.graalvm.compiler.core.common.type.TypeReference;
+import org.graalvm.compiler.core.common.type.*;
 import org.graalvm.compiler.core.phases.HighTier;
 import org.graalvm.compiler.debug.DebugContext;
 import org.graalvm.compiler.graph.Node;
@@ -592,6 +584,62 @@ public class TruffleHostInliningPhase extends AbstractInliningPhase {
         }
 
         ResolvedJavaMethod targetMethod = invoke.getTargetMethod();
+        if ((context.graph.shouldBeDevirtualizedLong || context.graph.shouldBeDevirtualizedDouble)  &&
+                (targetMethod.getName().equals("executeLong") || targetMethod.getName().equals("executeDouble"))) {
+            ResolvedJavaMethod overrideMethod = null;
+
+            if (context.graph.shouldBeDevirtualizedLong)
+                overrideMethod = StructuredGraph.argumentReadV2NodeExecuteLong;
+            else if (context.graph.shouldBeDevirtualizedDouble)
+                overrideMethod = StructuredGraph.argumentReadV2NodeExecuteDouble;
+
+            if (overrideMethod == null) {
+                System.out.println("should be unreachable: method not found");
+                return false;
+            }
+
+            if (!overrideMethod.canBeStaticallyBound()) {
+                System.out.println("should be unreachable: method can't be statically bound");
+                return false;
+            }
+
+            InliningUtil.replaceInvokeCallTarget(invoke, context.graph, InvokeKind.Special, overrideMethod);
+            System.out.println("Successful replacement from " + targetMethod.getName()
+                    + "in (" + context.graph.method().getDeclaringClass().getName() + context.graph.method().getName() + ")"
+                    + " to " + overrideMethod.getDeclaringClass().getName() + overrideMethod.getName());
+
+//            MethodCallTargetNode oldCallTarget = (MethodCallTargetNode) invoke.callTarget();
+//
+//            StampPair returnStamp;
+//            if (context.graph.shouldBeDevirtualizedLong) {
+//                returnStamp = StampPair.create(StampFactory.forInteger(Long.SIZE, Long.MIN_VALUE, Long.MAX_VALUE), null);
+//            } else if (context.graph.shouldBeDevirtualizedDouble) {
+//                returnStamp = StampPair.create(StampFactory.forFloat(JavaKind.Double, Double.MIN_VALUE, Double.MAX_VALUE, true), null);
+//            } else {
+//                System.out.println("should be unreachable: can't get a return stamp as the graph isn't a valid target");
+//                return false;
+//            }
+//
+//            MethodCallTargetNode newCallTarget = context.graph.add(new MethodCallTargetNode(
+//                InvokeKind.Special, overrideMethod, oldCallTarget.arguments().toArray(ValueNode.EMPTY_ARRAY),
+//                returnStamp, oldCallTarget.getTypeProfile())
+//            );
+//            InvokeNode newInvoke = new InvokeNode(newCallTarget, 0);
+//
+//            var valnode = invoke.asNode();
+//            var fixednode = invoke.asFixedNode();
+//
+//            invoke.asFixedNode().replaceAndDelete(newInvoke);
+//            System.out.println("Successful replacement for " + targetMethod.getName());
+//
+//            // int round = 0;
+//            // int exploreBudget = 10000;
+//            // call.children = exploreGraph(context, null, call, lookupGraph(context, call.getTargetMethod()), round, exploreBudget, 0);
+//            call.children = new ArrayList<>();
+
+            return false; // should be true
+        }
+
         if (!shouldInlineTarget(context, call, targetMethod)) {
             return false;
         }
@@ -603,44 +651,6 @@ public class TruffleHostInliningPhase extends AbstractInliningPhase {
         }
 
         if (!invoke.getInvokeKind().isDirect() && !shouldInlineMonomorphic(context, call, targetMethod)) {
-            if (context.graph.shouldBeDevirtualizedLong || context.graph.shouldBeDevirtualizedDouble) {
-                ResolvedJavaMethod overrideMethod = null;
-
-                if (context.graph.shouldBeDevirtualizedLong)
-                    overrideMethod = StructuredGraph.argumentReadV2NodeExecuteLong;
-                else if (context.graph.shouldBeDevirtualizedDouble)
-                    overrideMethod = StructuredGraph.argumentReadV2NodeExecuteDouble;
-
-                if (overrideMethod == null) {
-                    System.out.println("should be unreachable: method not found");
-                    return false;
-                }
-
-                if (!overrideMethod.canBeStaticallyBound()) {
-                    System.out.println("should be unreachable: method can't be statically bound");
-                    return false;
-                }
-
-                InliningUtil.replaceInvokeCallTarget(invoke, context.graph, InvokeKind.Special, overrideMethod);
-                MethodCallTargetNode oldCallTarget = (MethodCallTargetNode) invoke.callTarget();
-                IntegerStamp integerStamp = IntegerStamp.create(Long.SIZE, Long.MIN_VALUE, Long.MAX_VALUE);
-                StampPair returnStamp = StampPair.create(integerStamp, null);
-
-                MethodCallTargetNode newCallTarget = context.graph.add(new MethodCallTargetNode(
-                        InvokeKind.Special, overrideMethod, oldCallTarget.arguments().toArray(ValueNode.EMPTY_ARRAY),
-                        returnStamp, oldCallTarget.getTypeProfile())
-                );
-                
-                invoke.asNode().replaceFirstInput(oldCallTarget, newCallTarget);
-                System.out.println("Successful replacement");
-
-                int round = 0;
-                int exploreBudget = 10000;
-                call.children = null;//exploreGraph(context, null, call, lookupGraph(context, call.getTargetMethod()), round, exploreBudget, 0);
-
-                return true;
-            }
-
             return false;
         }
 
