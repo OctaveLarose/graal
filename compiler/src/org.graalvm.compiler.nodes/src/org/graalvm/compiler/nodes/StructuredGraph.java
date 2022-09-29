@@ -462,7 +462,7 @@ public final class StructuredGraph extends Graph implements JavaMethodContext {
 
     public static final boolean NO_PROFILING_INFO = false;
 
-    public static Map<String, ResolvedJavaMethod> methodMap = new WeakHashMap<>();
+    public static List<ResolvedJavaMethod> methodList = new ArrayList<>();
     public boolean shouldBeDevirtualized;
 
     private StructuredGraph(String name,
@@ -491,8 +491,7 @@ public final class StructuredGraph extends Graph implements JavaMethodContext {
 
         if (method != null && !method.getClass().getName().contains("PointsToAnalysisMethod")
                 && method.getDeclaringClass().getName().startsWith("Ltrufflesom/interpreter/nodes") && !method.getName().equals("<clinit>")) {
-            String keyName = method.getDeclaringClass().getName() + method.getName();
-            methodMap.putIfAbsent(keyName, method);
+            methodList.add(method);
         }
 
         this.graphId = uniqueGraphIds.incrementAndGet();

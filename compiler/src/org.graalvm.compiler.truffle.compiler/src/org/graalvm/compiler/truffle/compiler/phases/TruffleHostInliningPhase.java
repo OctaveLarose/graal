@@ -33,19 +33,15 @@ import java.util.*;
 import java.util.concurrent.atomic.AtomicReference;
 
 import jdk.vm.ci.meta.*;
-import jdk.vm.ci.runtime.JVMCI;
 import org.graalvm.collections.EconomicMap;
 import org.graalvm.collections.EconomicSet;
 import org.graalvm.collections.Equivalence;
 import org.graalvm.collections.UnmodifiableEconomicMap;
 import org.graalvm.compiler.core.common.type.IntegerStamp;
-import org.graalvm.compiler.core.common.type.Stamp;
 import org.graalvm.compiler.core.common.type.StampPair;
-import org.graalvm.compiler.core.common.type.TypeReference;
 import org.graalvm.compiler.core.phases.HighTier;
 import org.graalvm.compiler.debug.DebugContext;
 import org.graalvm.compiler.graph.Node;
-import org.graalvm.compiler.graph.NodeInputList;
 import org.graalvm.compiler.nodes.*;
 import org.graalvm.compiler.nodes.CallTargetNode.InvokeKind;
 import org.graalvm.compiler.nodes.cfg.Block;
@@ -54,7 +50,6 @@ import org.graalvm.compiler.nodes.graphbuilderconf.GraphBuilderConfiguration.Plu
 import org.graalvm.compiler.nodes.graphbuilderconf.GraphBuilderContext;
 import org.graalvm.compiler.nodes.graphbuilderconf.InlineInvokePlugin;
 import org.graalvm.compiler.nodes.java.MethodCallTargetNode;
-import org.graalvm.compiler.nodes.type.StampTool;
 import org.graalvm.compiler.options.Option;
 import org.graalvm.compiler.options.OptionKey;
 import org.graalvm.compiler.options.OptionValues;
@@ -71,7 +66,6 @@ import org.graalvm.compiler.truffle.compiler.PartialEvaluator;
 
 import com.oracle.truffle.api.CompilerDirectives;
 import com.oracle.truffle.api.CompilerDirectives.TruffleBoundary;
-import org.graalvm.compiler.truffle.runtime.GraalTruffleRuntime;
 
 /**
  * Domain specific inlining phase for Truffle interpreters during host compilation.
@@ -600,7 +594,13 @@ public class TruffleHostInliningPhase extends AbstractInliningPhase {
         if (!invoke.getInvokeKind().isDirect() && !shouldInlineMonomorphic(context, call, targetMethod)) {
 
             if (context.graph.shouldBeDevirtualized) {
-                ResolvedJavaMethod overrideMethod = StructuredGraph.methodMap.get("Ltrufflesom/interpreter/nodes/ArgumentReadV2Node$LocalArgumentReadNode;executeLong");
+                ResolvedJavaMethod overrideMethod = null;
+
+                for(ResolvedJavaMethod meth: StructuredGraph.methodList) {
+                    System.out.println(meth.getDeclaringClass().getName());
+                    if (meth.getName().equals("executeLong") && meth.getDeclaringClass().getName().equals("Ltrufflesom/interpreter/nodes/ArgumentReadV2Node$LocalArgumentReadNode;"))
+                        overrideMethod = meth; // i think the declaring class name is wrong here
+                }
 
                 if (overrideMethod == null) {
                     System.out.println("should be unreachable: method not found");
