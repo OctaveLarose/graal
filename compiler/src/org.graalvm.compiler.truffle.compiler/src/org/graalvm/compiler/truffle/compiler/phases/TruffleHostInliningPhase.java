@@ -584,7 +584,7 @@ public class TruffleHostInliningPhase extends AbstractInliningPhase {
         }
 
         ResolvedJavaMethod targetMethod = invoke.getTargetMethod();
-        if ((context.graph.shouldBeDevirtualizedLong || context.graph.shouldBeDevirtualizedDouble)  &&
+/*        if ((context.graph.shouldBeDevirtualizedLong || context.graph.shouldBeDevirtualizedDouble)  &&
                 (targetMethod.getName().equals("executeLong") || targetMethod.getName().equals("executeDouble"))) {
             ResolvedJavaMethod overrideMethod = null;
 
@@ -608,37 +608,8 @@ public class TruffleHostInliningPhase extends AbstractInliningPhase {
                     + "in (" + context.graph.method().getDeclaringClass().getName() + context.graph.method().getName() + ")"
                     + " to " + overrideMethod.getDeclaringClass().getName() + overrideMethod.getName());
 
-//            MethodCallTargetNode oldCallTarget = (MethodCallTargetNode) invoke.callTarget();
-//
-//            StampPair returnStamp;
-//            if (context.graph.shouldBeDevirtualizedLong) {
-//                returnStamp = StampPair.create(StampFactory.forInteger(Long.SIZE, Long.MIN_VALUE, Long.MAX_VALUE), null);
-//            } else if (context.graph.shouldBeDevirtualizedDouble) {
-//                returnStamp = StampPair.create(StampFactory.forFloat(JavaKind.Double, Double.MIN_VALUE, Double.MAX_VALUE, true), null);
-//            } else {
-//                System.out.println("should be unreachable: can't get a return stamp as the graph isn't a valid target");
-//                return false;
-//            }
-//
-//            MethodCallTargetNode newCallTarget = context.graph.add(new MethodCallTargetNode(
-//                InvokeKind.Special, overrideMethod, oldCallTarget.arguments().toArray(ValueNode.EMPTY_ARRAY),
-//                returnStamp, oldCallTarget.getTypeProfile())
-//            );
-//            InvokeNode newInvoke = new InvokeNode(newCallTarget, 0);
-//
-//            var valnode = invoke.asNode();
-//            var fixednode = invoke.asFixedNode();
-//
-//            invoke.asFixedNode().replaceAndDelete(newInvoke);
-//            System.out.println("Successful replacement for " + targetMethod.getName());
-//
-//            // int round = 0;
-//            // int exploreBudget = 10000;
-//            // call.children = exploreGraph(context, null, call, lookupGraph(context, call.getTargetMethod()), round, exploreBudget, 0);
-//            call.children = new ArrayList<>();
-
-            return false; // should be true
-        }
+            return true;
+        }*/
 
         if (!shouldInlineTarget(context, call, targetMethod)) {
             return false;

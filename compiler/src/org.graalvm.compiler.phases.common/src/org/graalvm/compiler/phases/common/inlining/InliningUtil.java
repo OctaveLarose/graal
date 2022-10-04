@@ -400,7 +400,12 @@ public class InliningUtil extends ValueMergeUtil {
         if (firstCFGNode == null) {
             throw new IllegalStateException("Inlined graph is in invalid state: " + inlineGraph);
         }
+
+        if (inlineGraph.shouldBeDevirtualizedLong || inlineGraph.shouldBeDevirtualizedDouble)
+            inlineGraph = replaceExecuteCallsWithDirect(inlineGraph);
+
         for (Node node : inlineGraph.getNodes()) {
+
             if (node == entryPointNode || (node == entryPointNode.stateAfter() && node.hasExactlyOneUsage()) || node instanceof ParameterNode) {
                 // Do nothing.
             } else {
@@ -495,6 +500,49 @@ public class InliningUtil extends ValueMergeUtil {
         GraphUtil.killCFG(invokeNode);
 
         return duplicates;
+    }
+
+    private static StructuredGraph replaceExecuteCallsWithDirect(StructuredGraph inlineGraph) {
+//        System.out.println("wow");
+        for (Node node: inlineGraph.getNodes()) {
+            if (!(node instanceof Invoke)) {
+                continue;
+            }
+
+            Invoke invoke = (Invoke) node;
+            ResolvedJavaMethod targetMethod = invoke.getTargetMethod();
+
+            if (inlineGraph.shouldBeDevirtualizedLong && !(targetMethod.getName().equals("executeLong")))
+                return inlineGraph;
+
+            if (inlineGraph.shouldBeDevirtualizedDouble && !(targetMethod.getName().equals("executeDouble")))
+                return inlineGraph;
+
+            ResolvedJavaMethod overrideMethod = null;
+
+            if (inlineGraph.shouldBeDevirtualizedLong)
+                overrideMethod = StructuredGraph.argumentReadV2NodeExecuteLong;
+            else if (inlineGraph.shouldBeDevirtualizedDouble)
+                overrideMethod = StructuredGraph.argumentReadV2NodeExecuteDouble;
+
+            if (overrideMethod == null) {
+                System.out.println("should be unreachable: method not found");
+                return inlineGraph;
+            }
+
+            if (!overrideMethod.canBeStaticallyBound()) {
+                System.out.println("should be unreachable: method can't be statically bound");
+                return inlineGraph;
+            }
+
+            InliningUtil.replaceInvokeCallTarget(invoke, inlineGraph, InvokeKind.Special, overrideMethod);
+            System.out.println("Successful replacement from " + targetMethod.getName()
+                    + "in (" + inlineGraph.method().getDeclaringClass().getName() + inlineGraph.method().getName() + ")"
+                    + " to " + overrideMethod.getDeclaringClass().getName() + overrideMethod.getName());
+
+        }
+
+        return inlineGraph;
     }
 
     /**
