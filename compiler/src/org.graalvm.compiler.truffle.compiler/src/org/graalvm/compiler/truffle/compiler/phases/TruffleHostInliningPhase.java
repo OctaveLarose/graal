@@ -584,32 +584,6 @@ public class TruffleHostInliningPhase extends AbstractInliningPhase {
         }
 
         ResolvedJavaMethod targetMethod = invoke.getTargetMethod();
-/*        if ((context.graph.shouldBeDevirtualizedLong || context.graph.shouldBeDevirtualizedDouble)  &&
-                (targetMethod.getName().equals("executeLong") || targetMethod.getName().equals("executeDouble"))) {
-            ResolvedJavaMethod overrideMethod = null;
-
-            if (context.graph.shouldBeDevirtualizedLong)
-                overrideMethod = StructuredGraph.argumentReadV2NodeExecuteLong;
-            else if (context.graph.shouldBeDevirtualizedDouble)
-                overrideMethod = StructuredGraph.argumentReadV2NodeExecuteDouble;
-
-            if (overrideMethod == null) {
-                System.out.println("should be unreachable: method not found");
-                return false;
-            }
-
-            if (!overrideMethod.canBeStaticallyBound()) {
-                System.out.println("should be unreachable: method can't be statically bound");
-                return false;
-            }
-
-            InliningUtil.replaceInvokeCallTarget(invoke, context.graph, InvokeKind.Special, overrideMethod);
-            System.out.println("Successful replacement from " + targetMethod.getName()
-                    + "in (" + context.graph.method().getDeclaringClass().getName() + context.graph.method().getName() + ")"
-                    + " to " + overrideMethod.getDeclaringClass().getName() + overrideMethod.getName());
-
-            return true;
-        }*/
 
         if (!shouldInlineTarget(context, call, targetMethod)) {
             return false;

@@ -889,6 +889,7 @@ public class TruffleFeature implements com.oracle.svm.core.graal.InternalFeature
         if (hosted && TruffleHostInliningPhase.Options.TruffleHostInlining.getValue(HostedOptionValues.singleton()) && suites.getHighTier() instanceof HighTier) {
             CanonicalizerPhase canonicalizer = ((HighTier) suites.getHighTier()).createCanonicalizerPhase();
             suites.getHighTier().prependPhase(new SubstrateTruffleHostInliningPhase(canonicalizer));
+            suites.getHighTier().prependPhase(new SupernodePhase(canonicalizer));
         }
     }
 }
