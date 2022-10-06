@@ -105,14 +105,20 @@ public final class SupernodePhase extends AbstractInliningPhase {
                 return graph;
             }
 
+            final DebugContext debug = graph.getDebug();
+            debug.forceDump(graph, "Before supernode inlining");
+
             InliningUtil.replaceInvokeCallTarget(invoke, graph, CallTargetNode.InvokeKind.Special, overrideMethod);
 
             StructuredGraph newGraph = parseGraph(this.context, graph, invoke.getTargetMethod());
             InliningUtil.inline(invoke, newGraph, false, invoke.getTargetMethod(), "SupernodePhase", "SupernodePhase");
 
+
             System.out.println("Successful replacement and inlining from " + targetMethod.getName()
                     + " in (" + graph.method().getDeclaringClass().getName() + graph.method().getName() + ")"
                     + " to " + overrideMethod.getDeclaringClass().getName() + overrideMethod.getName());
+
+            debug.forceDump(graph, "After supernode inlining");
         }
 
         return graph;
