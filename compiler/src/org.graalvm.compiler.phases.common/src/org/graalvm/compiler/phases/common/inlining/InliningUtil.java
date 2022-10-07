@@ -40,6 +40,7 @@ import org.graalvm.collections.Equivalence;
 import org.graalvm.collections.Pair;
 import org.graalvm.collections.UnmodifiableEconomicMap;
 import org.graalvm.collections.UnmodifiableMapCursor;
+import org.graalvm.compiler.core.common.CompilationIdentifier;
 import org.graalvm.compiler.core.common.calc.CanonicalCondition;
 import org.graalvm.compiler.core.common.type.Stamp;
 import org.graalvm.compiler.core.common.type.StampFactory;
@@ -106,6 +107,7 @@ import org.graalvm.compiler.nodes.type.StampTool;
 import org.graalvm.compiler.nodes.util.GraphUtil;
 import org.graalvm.compiler.phases.common.inlining.info.InlineInfo;
 import org.graalvm.compiler.phases.common.util.EconomicSetNodeEventListener;
+import org.graalvm.compiler.phases.tiers.HighTierContext;
 import org.graalvm.compiler.phases.util.ValueMergeUtil;
 import org.graalvm.compiler.serviceprovider.SpeculationReasonGroup;
 
@@ -401,9 +403,6 @@ public class InliningUtil extends ValueMergeUtil {
             throw new IllegalStateException("Inlined graph is in invalid state: " + inlineGraph);
         }
 
-        if (inlineGraph.shouldBeDevirtualizedLong || inlineGraph.shouldBeDevirtualizedDouble)
-            inlineGraph = replaceExecuteCallsWithDirect(inlineGraph);
-
         for (Node node : inlineGraph.getNodes()) {
 
             if (node == entryPointNode || (node == entryPointNode.stateAfter() && node.hasExactlyOneUsage()) || node instanceof ParameterNode) {
@@ -500,49 +499,6 @@ public class InliningUtil extends ValueMergeUtil {
         GraphUtil.killCFG(invokeNode);
 
         return duplicates;
-    }
-
-    private static StructuredGraph replaceExecuteCallsWithDirect(StructuredGraph inlineGraph) {
-//        System.out.println("wow");
-        for (Node node: inlineGraph.getNodes()) {
-            if (!(node instanceof Invoke)) {
-                continue;
-            }
-
-            Invoke invoke = (Invoke) node;
-            ResolvedJavaMethod targetMethod = invoke.getTargetMethod();
-
-            if (inlineGraph.shouldBeDevirtualizedLong && !(targetMethod.getName().equals("executeLong")))
-                return inlineGraph;
-
-            if (inlineGraph.shouldBeDevirtualizedDouble && !(targetMethod.getName().equals("executeDouble")))
-                return inlineGraph;
-
-            ResolvedJavaMethod overrideMethod = null;
-
-            if (inlineGraph.shouldBeDevirtualizedLong)
-                overrideMethod = StructuredGraph.argumentReadV2NodeExecuteLong;
-            else if (inlineGraph.shouldBeDevirtualizedDouble)
-                overrideMethod = StructuredGraph.argumentReadV2NodeExecuteDouble;
-
-            if (overrideMethod == null) {
-                System.out.println("should be unreachable: method not found");
-                return inlineGraph;
-            }
-
-            if (!overrideMethod.canBeStaticallyBound()) {
-                System.out.println("should be unreachable: method can't be statically bound");
-                return inlineGraph;
-            }
-
-            InliningUtil.replaceInvokeCallTarget(invoke, inlineGraph, InvokeKind.Special, overrideMethod);
-            System.out.println("Successful replacement from " + targetMethod.getName()
-                    + "in (" + inlineGraph.method().getDeclaringClass().getName() + inlineGraph.method().getName() + ")"
-                    + " to " + overrideMethod.getDeclaringClass().getName() + overrideMethod.getName());
-
-        }
-
-        return inlineGraph;
     }
 
     /**
