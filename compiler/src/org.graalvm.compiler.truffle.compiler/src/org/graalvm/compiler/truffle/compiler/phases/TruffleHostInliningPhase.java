@@ -864,8 +864,10 @@ public class TruffleHostInliningPhase extends AbstractInliningPhase {
         StructuredGraph inlineGraph = lookupGraph(context, targetMethod);
 
         if (inlineGraph.shouldBeDevirtualizedLong) {// || inlineGraph.shouldBeDevirtualizedDouble)
+//            inlineGraph.getDebug().forceDump(inlineGraph, "pre replacement");
             inlineGraph = replaceExecuteCallsWithDirect(context, inlineGraph);
             call.children = new ArrayList<>();
+//            inlineGraph.getDebug().forceDump(inlineGraph, "post replacement");
         }
 
         AtomicReference<UnmodifiableEconomicMap<Node, Node>> duplicates = new AtomicReference<>();
@@ -873,6 +875,11 @@ public class TruffleHostInliningPhase extends AbstractInliningPhase {
                         (d) -> duplicates.set(d),
                         "Truffle Host Inlining",
                         "Truffle Host Inlining"));
+
+//        if (inlineGraph.shouldBeDevirtualizedLong) {// || inlineGraph.shouldBeDevirtualizedDouble)
+//            inlineGraph.getDebug().forceDump(inlineGraph, "post INLINING");
+//        }
+
         return duplicates.get();
     }
 
@@ -926,11 +933,8 @@ public class TruffleHostInliningPhase extends AbstractInliningPhase {
             System.out.println("Successful replacement and inlining from " + targetMethod.getName()
                     + " in (" + inlineGraph.method().getDeclaringClass().getName() + inlineGraph.method().getName() + ")"
                     + " to " + overrideMethod.getDeclaringClass().getName() + overrideMethod.getName());
-            break;
         }
 
-        for (Node n: inlineGraph.getNodes())
-            System.out.println(n.getId());
         return inlineGraph;
     }
 
