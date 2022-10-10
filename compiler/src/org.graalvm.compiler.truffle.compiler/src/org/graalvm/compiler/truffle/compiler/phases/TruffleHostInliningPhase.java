@@ -935,6 +935,9 @@ public class TruffleHostInliningPhase extends AbstractInliningPhase {
                     + " to " + overrideMethod.getDeclaringClass().getName() + overrideMethod.getName());
         }
 
+        new DeadCodeEliminationPhase(Optional).apply(inlineGraph);
+        canonicalizer.apply(inlineGraph, context.highTierContext);
+
         return inlineGraph;
     }
 
