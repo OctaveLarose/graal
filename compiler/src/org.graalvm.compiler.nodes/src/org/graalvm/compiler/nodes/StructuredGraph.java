@@ -462,13 +462,13 @@ public final class StructuredGraph extends Graph implements JavaMethodContext {
 
     public static final boolean NO_PROFILING_INFO = false;
 
-    public boolean shouldBeDevirtualizedLong = false;
+    public boolean isAdditionV2Target = false;
 
-    public boolean shouldBeDevirtualizedDouble = false;
+    public boolean isLocalVarSquareWrite = false;
 
-    public static ResolvedJavaMethod argumentReadV2NodeExecuteLong;
+    public static ResolvedJavaMethod localVarReadReplace;
 
-    public static ResolvedJavaMethod argumentReadV2NodeExecuteDouble;
+    public static ResolvedJavaMethod intLiteralReplace;
 
     private StructuredGraph(String name,
                     ResolvedJavaMethod method,
@@ -487,20 +487,27 @@ public final class StructuredGraph extends Graph implements JavaMethodContext {
         super(name, options, debug, trackNodeSourcePosition);
         this.setStart(add(new StartNode()));
         this.rootMethod = method;
-        if (method != null && method.getDeclaringClass().getName().startsWith("Ltrufflesom/primitives/arithmetic/MultiplicationV2PrimFactory") ) {
-//            System.out.println(method.getName());
-            if (method.getName().equals("executeGeneric_long_long0")){// || method.getName().equals("executeLong")) {
-//                System.out.println("graph for method " + method.getDeclaringClass().getName() + method.getName() + " found");
-                this.shouldBeDevirtualizedLong = true;
-            }
 
-            if (method.getName().equals("executeGeneric_double_double2") || method.getName().equals("executeDouble_double_double10")) {
-//                System.out.println("graph for method " + method.getDeclaringClass().getName() + method.getName() + " found");
-                this.shouldBeDevirtualizedDouble = true;
+        if (method != null && method.getDeclaringClass().getName().equals("Ltrufflesom/primitives/arithmetic/AdditionV2PrimFactory$AdditionV2PrimNodeGen;")) {
+            if (method.getName().equals("executeLong")) {
+                this.isAdditionV2Target = true;
             }
         }
 
-        if (method != null && method.getDeclaringClass().getName().startsWith("Ltrufflesom/interpreter/nodes/ArgumentReadV2Node") ) {
+        if (method != null && method.getDeclaringClass().getName().equals("Ltrufflesom/interpreter/nodes/NonLocalVariableV2NodeFactory$NonLocalVariableReadNodeGen;")) {
+            if (method.getName().equals("executeLong")) {
+                localVarReadReplace = method;
+            }
+        }
+        if (method != null && method.getDeclaringClass().getName().equals("Ltrufflesom/interpreter/nodes/literals/IntegerLiteralNode;")) {
+            if (method.getName().equals("executeLong")) {
+                intLiteralReplace = method;
+            }
+        }
+
+        // TODO if nonlocalvariablewritev2, replace
+
+        /*if (method != null && method.getDeclaringClass().getName().startsWith("Ltrufflesom/interpreter/nodes/ArgumentReadV2Node") ) {
             // those two are fetched that way since originally those methods were never called otherwise, so there was no associated graph.
             // however it turns out that i had to call them anyway, otherwise it wouldn't work, so they could be fetched like the previous one honestly
             for (var meth: method.getDeclaringClass().getDeclaredMethods()) {
@@ -509,7 +516,7 @@ public final class StructuredGraph extends Graph implements JavaMethodContext {
                 if (meth.getName().equals("doDouble"))
                     argumentReadV2NodeExecuteDouble = meth;
             }
-        }
+        }*/
 
         this.graphId = uniqueGraphIds.incrementAndGet();
         this.compilationId = compilationId;

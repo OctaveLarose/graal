@@ -38,13 +38,11 @@ import org.graalvm.collections.EconomicMap;
 import org.graalvm.collections.EconomicSet;
 import org.graalvm.collections.Equivalence;
 import org.graalvm.collections.UnmodifiableEconomicMap;
-import org.graalvm.compiler.core.common.CompilationIdentifier;
 import org.graalvm.compiler.core.common.type.*;
 import org.graalvm.compiler.core.phases.HighTier;
 import org.graalvm.compiler.debug.DebugContext;
 import org.graalvm.compiler.graph.Node;
 import org.graalvm.compiler.graph.NodeInputList;
-import org.graalvm.compiler.graph.NodeMap;
 import org.graalvm.compiler.nodes.*;
 import org.graalvm.compiler.nodes.CallTargetNode.InvokeKind;
 import org.graalvm.compiler.nodes.cfg.Block;
@@ -54,7 +52,6 @@ import org.graalvm.compiler.nodes.graphbuilderconf.GraphBuilderContext;
 import org.graalvm.compiler.nodes.graphbuilderconf.InlineInvokePlugin;
 import org.graalvm.compiler.nodes.java.MethodCallTargetNode;
 import org.graalvm.compiler.nodes.type.StampTool;
-import org.graalvm.compiler.nodes.util.GraphUtil;
 import org.graalvm.compiler.options.Option;
 import org.graalvm.compiler.options.OptionKey;
 import org.graalvm.compiler.options.OptionValues;
@@ -166,6 +163,14 @@ public class TruffleHostInliningPhase extends AbstractInliningPhase {
         debug.dump(DebugContext.VERBOSE_LEVEL, context.graph, "Before Truffle host inlining");
 
         CallTree root = new CallTree(rootMethod);
+
+        if (context.graph.isAdditionV2Target) {
+            System.out.println("replacement started");
+            context.graph.getDebug().forceDump(context.graph, "pre replacement");
+            replaceExecuteCallsWithDirect(context, context.graph);
+//            call.children = new ArrayList<>();
+            context.graph.getDebug().forceDump(context.graph, "post replacement");
+        }
 
         int round = 0;
         int inlineIndex = 0;
@@ -587,6 +592,7 @@ public class TruffleHostInliningPhase extends AbstractInliningPhase {
         }
 
         ResolvedJavaMethod targetMethod = invoke.getTargetMethod();
+
         if (!shouldInlineTarget(context, call, targetMethod)) {
             return false;
         }
@@ -863,12 +869,12 @@ public class TruffleHostInliningPhase extends AbstractInliningPhase {
         }
         StructuredGraph inlineGraph = lookupGraph(context, targetMethod);
 
-        if (inlineGraph.shouldBeDevirtualizedLong) {// || inlineGraph.shouldBeDevirtualizedDouble)
+       /* if (inlineGraph.isAdditionV2Target) {
 //            inlineGraph.getDebug().forceDump(inlineGraph, "pre replacement");
             inlineGraph = replaceExecuteCallsWithDirect(context, inlineGraph);
             call.children = new ArrayList<>();
 //            inlineGraph.getDebug().forceDump(inlineGraph, "post replacement");
-        }
+        }*/
 
         AtomicReference<UnmodifiableEconomicMap<Node, Node>> duplicates = new AtomicReference<>();
         canonicalizableNodes.addAll(InliningUtil.inlineForCanonicalization(invoke, inlineGraph, true, targetMethod,
@@ -884,6 +890,8 @@ public class TruffleHostInliningPhase extends AbstractInliningPhase {
     }
 
     private StructuredGraph replaceExecuteCallsWithDirect(InliningPhaseContext context, StructuredGraph inlineGraph) {
+        boolean isFirstReplaceDone = false;
+
         for (Node node: inlineGraph.getNodes()) {
             if (!(node instanceof Invoke)) {
                 continue;
@@ -892,18 +900,15 @@ public class TruffleHostInliningPhase extends AbstractInliningPhase {
             Invoke invoke = (Invoke) node;
             ResolvedJavaMethod targetMethod = invoke.getTargetMethod();
 
-            if (inlineGraph.shouldBeDevirtualizedLong && !(targetMethod.getName().equals("executeLong")))
-                return inlineGraph;
-
-//            if (inlineGraph.shouldBeDevirtualizedDouble && !(targetMethod.getName().equals("executeDouble")))
-//                return inlineGraph;
+            if (!targetMethod.getName().equals("executeLong"))
+                continue;
 
             ResolvedJavaMethod overrideMethod = null;
 
-            if (inlineGraph.shouldBeDevirtualizedLong)
-                overrideMethod = StructuredGraph.argumentReadV2NodeExecuteLong;
-//            else if (inlineGraph.shouldBeDevirtualizedDouble)
-//                overrideMethod = StructuredGraph.argumentReadV2NodeExecuteDouble;
+            if (!isFirstReplaceDone)
+                overrideMethod = StructuredGraph.localVarReadReplace;
+            else
+                overrideMethod = StructuredGraph.intLiteralReplace;
 
             if (overrideMethod == null) {
                 System.out.println("should be unreachable: method not found");
@@ -919,7 +924,6 @@ public class TruffleHostInliningPhase extends AbstractInliningPhase {
 //            InliningUtil.replaceInvokeCallTarget(invoke, inlineGraph, InvokeKind.Special, overrideMethod);
 //            System.out.println("post replacement and pre-fuckup: " + invoke.getTargetMethod().getDeclaringClass().getName() + invoke.getTargetMethod().getName());
 
-
             StructuredGraph newGraph = parseGraph(context.highTierContext, inlineGraph, overrideMethod);
             inlineGraph.getDebug().forceDump(inlineGraph, "graph preinlining");
 
@@ -933,6 +937,10 @@ public class TruffleHostInliningPhase extends AbstractInliningPhase {
             System.out.println("Successful replacement and inlining from " + targetMethod.getName()
                     + " in (" + inlineGraph.method().getDeclaringClass().getName() + inlineGraph.method().getName() + ")"
                     + " to " + overrideMethod.getDeclaringClass().getName() + overrideMethod.getName());
+
+            if (isFirstReplaceDone)
+                break;
+            isFirstReplaceDone = true;
         }
 
         new DeadCodeEliminationPhase(Optional).apply(inlineGraph);
