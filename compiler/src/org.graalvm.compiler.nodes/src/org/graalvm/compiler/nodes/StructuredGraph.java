@@ -462,13 +462,11 @@ public final class StructuredGraph extends Graph implements JavaMethodContext {
 
     public static final boolean NO_PROFILING_INFO = false;
 
-    public boolean shouldBeDevirtualizedLong = false;
-
-    public boolean shouldBeDevirtualizedDouble = false;
+    public boolean shouldContainReplacementsAndInlining = false;
 
     public static ResolvedJavaMethod argumentReadV2NodeExecuteLong;
 
-    public static ResolvedJavaMethod argumentReadV2NodeExecuteDouble;
+    public static ResolvedJavaMethod executeGeneric_long_long0;
 
     private StructuredGraph(String name,
                     ResolvedJavaMethod method,
@@ -488,26 +486,18 @@ public final class StructuredGraph extends Graph implements JavaMethodContext {
         this.setStart(add(new StartNode()));
         this.rootMethod = method;
         if (method != null && method.getDeclaringClass().getName().startsWith("Ltrufflesom/primitives/arithmetic/MultiplicationV2PrimFactory") ) {
-//            System.out.println(method.getName());
-            if (method.getName().equals("executeGeneric_long_long0")){// || method.getName().equals("executeLong")) {
-//                System.out.println("graph for method " + method.getDeclaringClass().getName() + method.getName() + " found");
-                this.shouldBeDevirtualizedLong = true;
+            if (method.getName().equals("executeGeneric")) {
+                this.shouldContainReplacementsAndInlining = true;
             }
-
-            if (method.getName().equals("executeGeneric_double_double2") || method.getName().equals("executeDouble_double_double10")) {
-//                System.out.println("graph for method " + method.getDeclaringClass().getName() + method.getName() + " found");
-                this.shouldBeDevirtualizedDouble = true;
+            if (method.getName().equals("executeGeneric_long_long0")) {
+                executeGeneric_long_long0 = method;
             }
         }
 
         if (method != null && method.getDeclaringClass().getName().startsWith("Ltrufflesom/interpreter/nodes/ArgumentReadV2Node") ) {
-            // those two are fetched that way since originally those methods were never called otherwise, so there was no associated graph.
-            // however it turns out that i had to call them anyway, otherwise it wouldn't work, so they could be fetched like the previous one honestly
             for (var meth: method.getDeclaringClass().getDeclaredMethods()) {
                 if (meth.getName().equals("doLong"))
                     argumentReadV2NodeExecuteLong = meth;
-                if (meth.getName().equals("doDouble"))
-                    argumentReadV2NodeExecuteDouble = meth;
             }
         }
 
