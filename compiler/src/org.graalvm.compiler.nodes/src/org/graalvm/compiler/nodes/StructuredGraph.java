@@ -466,8 +466,6 @@ public final class StructuredGraph extends Graph implements JavaMethodContext {
 
     public static ResolvedJavaMethod argumentReadV2NodeExecuteLong;
 
-    public static ResolvedJavaMethod executeGeneric_long_long0;
-
     private StructuredGraph(String name,
                     ResolvedJavaMethod method,
                     int entryBCI,
@@ -488,9 +486,6 @@ public final class StructuredGraph extends Graph implements JavaMethodContext {
         if (method != null && method.getDeclaringClass().getName().startsWith("Ltrufflesom/primitives/arithmetic/MultiplicationV2PrimFactory") ) {
             if (method.getName().equals("executeGeneric")) {
                 this.shouldContainReplacementsAndInlining = true;
-            }
-            if (method.getName().equals("executeGeneric_long_long0")) {
-                executeGeneric_long_long0 = method;
             }
         }
 

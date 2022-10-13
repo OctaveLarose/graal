@@ -143,6 +143,20 @@ public class TruffleHostInliningPhase extends AbstractInliningPhase {
         if (graph.shouldContainReplacementsAndInlining) {
             graph = replaceExecuteCallsWithDirect(inliningPhaseContext, graph);
             graph.getDebug().forceDump(graph, "graph post replacement");
+
+            for (Node node: graph.getNodes()) {
+                if (!(node instanceof Invoke)) {
+                    continue;
+                }
+
+                Invoke invoke = (Invoke) node;
+                ResolvedJavaMethod targetMethod = invoke.getTargetMethod();
+                if (!(targetMethod.getName().equals("multiplyExact")))
+                    continue;
+
+                InliningUtil.inline(invoke, lookupGraph(inliningPhaseContext, targetMethod), false, targetMethod);
+                System.out.println("Successful inlining of multiplyExact");
+            }
         }
     }
 
