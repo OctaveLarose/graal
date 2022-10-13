@@ -137,30 +137,12 @@ public class TruffleHostInliningPhase extends AbstractInliningPhase {
         }
 
         var inliningPhaseContext = new InliningPhaseContext(highTierContext, graph, TruffleCompilerRuntime.getRuntimeIfAvailable(), isBytecodeInterpreterSwitch(method));
+
         runImpl(inliningPhaseContext);
 
         if (graph.shouldContainReplacementsAndInlining) {
-            System.out.println("Graph is for the right executeGeneric, inlining now");
-
-            var methodToInline = StructuredGraph.executeGeneric_long_long0;
-            var inlineGraph = parseGraph(null, graph, methodToInline);
-            inlineGraph = replaceExecuteCallsWithDirect(inliningPhaseContext, inlineGraph);
-            System.out.println("Inline graph (executeGeneric_long_long0) generated");
-
-            for (Node node: graph.getNodes()) {
-                if (!(node instanceof Invoke)) {
-                    continue;
-                }
-
-                Invoke invoke = (Invoke) node;
-                ResolvedJavaMethod targetMethod = invoke.getTargetMethod();
-
-                if (!(targetMethod.getName().equals("executeGeneric_long_long0")))
-                    continue;
-
-                InliningUtil.inline(invoke, inlineGraph, false, methodToInline);
-                System.out.println("Inlining done");
-            }
+            graph = replaceExecuteCallsWithDirect(inliningPhaseContext, graph);
+//            graph.getDebug().forceDump(graph, "graph post replacement");
         }
     }
 
