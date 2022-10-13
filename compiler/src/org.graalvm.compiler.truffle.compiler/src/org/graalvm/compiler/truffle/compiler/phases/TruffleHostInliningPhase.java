@@ -142,7 +142,7 @@ public class TruffleHostInliningPhase extends AbstractInliningPhase {
 
         if (graph.shouldContainReplacementsAndInlining) {
             graph = replaceExecuteCallsWithDirect(inliningPhaseContext, graph);
-//            graph.getDebug().forceDump(graph, "graph post replacement");
+            graph.getDebug().forceDump(graph, "graph post replacement");
         }
     }
 
@@ -910,7 +910,7 @@ public class TruffleHostInliningPhase extends AbstractInliningPhase {
             ResolvedJavaMethod targetMethod = invoke.getTargetMethod();
 
             if (!(targetMethod.getName().equals("executeLong")))
-                return inlineGraph;
+                continue;
 
             ResolvedJavaMethod overrideMethod = StructuredGraph.argumentReadV2NodeExecuteLong;
 
