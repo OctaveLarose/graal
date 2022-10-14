@@ -941,22 +941,14 @@ public class TruffleHostInliningPhase extends AbstractInliningPhase {
             var debug = inlineGraph.getDebug();
             try (DebugContext.Scope s = debug.scope("replacement in hosted inlining phase", overrideMethod)) {
                 StructuredGraph newGraph = parseGraph(context.highTierContext, inlineGraph, overrideMethod);
-//                debug.forceDump(inlineGraph, "graph pre replacement");
-                debug.dump(DebugContext.BASIC_LEVEL, inlineGraph, "graph pre replacement");
 
                 InliningUtil.replaceInvokeCallTarget(invoke, inlineGraph, InvokeKind.Special, overrideMethod);
-//                debug.forceDump(inlineGraph, "graph post replacement");
-                debug.dump(DebugContext.BASIC_LEVEL, inlineGraph, "graph post replacement");
-
                 InliningUtil.inline(invoke, newGraph, false, overrideMethod);
-//                debug.forceDump(inlineGraph, "graph post inlining");
-                debug.dump(DebugContext.BASIC_LEVEL, inlineGraph, "graph post inlining");
 
                 new DeadCodeEliminationPhase(Optional).apply(inlineGraph);
                 canonicalizer.apply(inlineGraph, context.highTierContext);
 //                debug.forceDump(inlineGraph, "graph post deadcodeelim/canonicalizer");
-                debug.dump(DebugContext.BASIC_LEVEL, inlineGraph, "graph post deadcodeelim/canonicalizer");
-
+//                debug.dump(DebugContext.BASIC_LEVEL, inlineGraph, "graph post deadcodeelim/canonicalizer");
             } catch (Throwable e) {
                 throw debug.handle(e);
             }

@@ -489,10 +489,9 @@ public final class StructuredGraph extends Graph implements JavaMethodContext {
             }
         }
 
-        if (method != null && method.getDeclaringClass().getName().startsWith("Ltrufflesom/interpreter/nodes/ArgumentReadV2Node") ) {
-            for (var meth: method.getDeclaringClass().getDeclaredMethods()) {
-                if (meth.getName().equals("doLong"))
-                    argumentReadV2NodeExecuteLong = meth;
+        if (method != null && method.getDeclaringClass().getName().startsWith("Ltrufflesom/interpreter/nodes/ArgumentReadV2Node")) {
+            if (method.getName().equals("doLong")) {
+                argumentReadV2NodeExecuteLong = method;
             }
         }
 
