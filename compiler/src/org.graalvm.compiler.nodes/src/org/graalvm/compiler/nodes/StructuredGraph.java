@@ -464,11 +464,7 @@ public final class StructuredGraph extends Graph implements JavaMethodContext {
 
     public boolean isAdditionV2Target = false;
 
-    public boolean isLocalVarSquareWrite = false;
-
-    public static ResolvedJavaMethod localVarReadReplace;
-
-    public static ResolvedJavaMethod intLiteralReplace;
+    public static List<ResolvedJavaMethod> executeLongList = new ArrayList<>();
 
     private StructuredGraph(String name,
                     ResolvedJavaMethod method,
@@ -488,35 +484,17 @@ public final class StructuredGraph extends Graph implements JavaMethodContext {
         this.setStart(add(new StartNode()));
         this.rootMethod = method;
 
-        if (method != null && method.getDeclaringClass().getName().equals("Ltrufflesom/primitives/arithmetic/AdditionV2PrimFactory$AdditionV2PrimNodeGen;")) {
-            if (method.getName().equals("executeLong")) {
-                this.isAdditionV2Target = true;
-            }
+        if (method != null && !method.getClass().getName().contains("PointsToAnalysisMethod")
+                && method.getDeclaringClass().getName().startsWith("Ltrufflesom/interpreter/nodes")
+                && method.getName().equals("executeLong")) {
+            executeLongList.add(method);
         }
 
-        if (method != null && method.getDeclaringClass().getName().equals("Ltrufflesom/interpreter/nodes/NonLocalVariableV2NodeFactory$NonLocalVariableReadNodeGen;")) {
-            if (method.getName().equals("executeLong")) {
-                localVarReadReplace = method;
-            }
-        }
-        if (method != null && method.getDeclaringClass().getName().equals("Ltrufflesom/interpreter/nodes/literals/IntegerLiteralNode;")) {
-            if (method.getName().equals("executeLong")) {
-                intLiteralReplace = method;
-            }
+        if (isMethod(method, "Ltrufflesom/primitives/arithmetic/AdditionV2PrimFactory$AdditionV2PrimNodeGen;", "executeGeneric")) {
+            this.isAdditionV2Target = true;
         }
 
         // TODO if nonlocalvariablewritev2, replace
-
-        /*if (method != null && method.getDeclaringClass().getName().startsWith("Ltrufflesom/interpreter/nodes/ArgumentReadV2Node") ) {
-            // those two are fetched that way since originally those methods were never called otherwise, so there was no associated graph.
-            // however it turns out that i had to call them anyway, otherwise it wouldn't work, so they could be fetched like the previous one honestly
-            for (var meth: method.getDeclaringClass().getDeclaredMethods()) {
-                if (meth.getName().equals("doLong"))
-                    argumentReadV2NodeExecuteLong = meth;
-                if (meth.getName().equals("doDouble"))
-                    argumentReadV2NodeExecuteDouble = meth;
-            }
-        }*/
 
         this.graphId = uniqueGraphIds.incrementAndGet();
         this.compilationId = compilationId;
@@ -532,6 +510,13 @@ public final class StructuredGraph extends Graph implements JavaMethodContext {
         this.inliningLog = GraalOptions.TraceInlining.getValue(options) ? new InliningLog(rootMethod) : null;
         this.callerContext = context;
         this.frameStateVerification = isSubstitution ? FrameStateVerification.NONE : FrameStateVerification.ALL;
+    }
+
+    private boolean isMethod(ResolvedJavaMethod method, String className, String methodName) {
+        if (method == null)
+            return false;
+
+        return method.getDeclaringClass().getName().equals(className) && method.getName().equals(methodName);
     }
 
     private static boolean checkIsSubstitutionInvariants(ResolvedJavaMethod method, boolean isSubstitution) {

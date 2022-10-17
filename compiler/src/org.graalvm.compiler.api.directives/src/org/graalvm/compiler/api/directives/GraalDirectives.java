@@ -28,6 +28,11 @@ import jdk.vm.ci.meta.DeoptimizationAction;
 import jdk.vm.ci.meta.DeoptimizationReason;
 import jdk.vm.ci.meta.SpeculationLog.SpeculationReason;
 
+import java.lang.annotation.ElementType;
+import java.lang.annotation.Retention;
+import java.lang.annotation.RetentionPolicy;
+import java.lang.annotation.Target;
+
 // JaCoCo Exclude
 
 /**
@@ -581,5 +586,15 @@ public final class GraalDirectives {
     @SuppressWarnings("unused")
     public static void log(String format, long v1, long v2, long v3) {
         System.out.printf(format, v1, v2, v3);
+    }
+
+    @Retention(RetentionPolicy.RUNTIME) // CLASS is probably better
+    @Target({ElementType.TYPE})
+    public @interface Supernode {
+
+        Class<?>[] forChildren() default {};
+
+        // Methods of the children to be fetched and replaced, for now we assume it's always executeLong
+        String methodName() default "executeLong";
     }
 }

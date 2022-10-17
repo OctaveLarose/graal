@@ -32,17 +32,15 @@ import java.io.PrintStream;
 import java.util.*;
 import java.util.concurrent.atomic.AtomicReference;
 
+import org.graalvm.compiler.api.directives.GraalDirectives.Supernode;
 import jdk.vm.ci.meta.*;
-import jdk.vm.ci.runtime.JVMCI;
 import org.graalvm.collections.EconomicMap;
 import org.graalvm.collections.EconomicSet;
 import org.graalvm.collections.Equivalence;
 import org.graalvm.collections.UnmodifiableEconomicMap;
-import org.graalvm.compiler.core.common.type.*;
 import org.graalvm.compiler.core.phases.HighTier;
 import org.graalvm.compiler.debug.DebugContext;
 import org.graalvm.compiler.graph.Node;
-import org.graalvm.compiler.graph.NodeInputList;
 import org.graalvm.compiler.nodes.*;
 import org.graalvm.compiler.nodes.CallTargetNode.InvokeKind;
 import org.graalvm.compiler.nodes.cfg.Block;
@@ -51,7 +49,6 @@ import org.graalvm.compiler.nodes.graphbuilderconf.GraphBuilderConfiguration.Plu
 import org.graalvm.compiler.nodes.graphbuilderconf.GraphBuilderContext;
 import org.graalvm.compiler.nodes.graphbuilderconf.InlineInvokePlugin;
 import org.graalvm.compiler.nodes.java.MethodCallTargetNode;
-import org.graalvm.compiler.nodes.type.StampTool;
 import org.graalvm.compiler.options.Option;
 import org.graalvm.compiler.options.OptionKey;
 import org.graalvm.compiler.options.OptionValues;
@@ -68,7 +65,6 @@ import org.graalvm.compiler.truffle.compiler.PartialEvaluator;
 
 import com.oracle.truffle.api.CompilerDirectives;
 import com.oracle.truffle.api.CompilerDirectives.TruffleBoundary;
-import org.graalvm.compiler.truffle.runtime.GraalTruffleRuntime;
 
 /**
  * Domain specific inlining phase for Truffle interpreters during host compilation.
@@ -141,7 +137,98 @@ public class TruffleHostInliningPhase extends AbstractInliningPhase {
             return;
         }
 
-        runImpl(new InliningPhaseContext(highTierContext, graph, TruffleCompilerRuntime.getRuntimeIfAvailable(), isBytecodeInterpreterSwitch(method)));
+        var inliningPhaseContext = new InliningPhaseContext(highTierContext, graph, TruffleCompilerRuntime.getRuntimeIfAvailable(), isBytecodeInterpreterSwitch(method));
+        runImpl(inliningPhaseContext);
+
+        if (graph.isAdditionV2Target) {
+            System.out.println("replacement started");
+            var klass = graph.method().getDeclaringClass().getSuperclass();
+            var supernodeAnnot = klass.getAnnotation(Supernode.class);
+
+            var child1 = supernodeAnnot.forChildren()[0];
+
+            List<ResolvedJavaMethod> replacementsList = new ArrayList<>();
+            for (var child: supernodeAnnot.forChildren()) {
+                var meth = getMethodFromClass(child1);
+                assert meth != null;
+                replacementsList.add(meth);
+            }
+
+//            graph.getDebug().forceDump(graph, "pre replacement");
+            replaceExecuteCallsWithDirect(inliningPhaseContext, graph, replacementsList);
+//            graph.getDebug().forceDump(graph, "post replacement");
+        }
+    }
+
+    ResolvedJavaMethod getMethodFromClass(Class<?> klass) {
+        ResolvedJavaMethod correctMethod = null;
+        String className = klass.getName();
+
+        for (var executeLong: StructuredGraph.executeLongList) {
+            var type = executeLong.getDeclaringClass();
+            if (type.toString().contains(className))
+                correctMethod = executeLong;
+        }
+
+        return correctMethod;
+    }
+
+    private StructuredGraph replaceExecuteCallsWithDirect(InliningPhaseContext context, StructuredGraph inlineGraph, List<ResolvedJavaMethod> replacementsList) {
+        inlineGraph.getDebug().forceDump(inlineGraph, "before our changes");
+
+        int replacementIdx = 0;
+        for (Node node: inlineGraph.getNodes()) {
+            if (!(node instanceof Invoke)) {
+                continue;
+            }
+
+            Invoke invoke = (Invoke) node;
+            ResolvedJavaMethod targetMethod = invoke.getTargetMethod();
+
+            if (!targetMethod.getName().equals("executeLong"))
+                continue;
+
+            ResolvedJavaMethod overrideMethod = replacementsList.get(replacementIdx);
+
+            if (overrideMethod == null) {
+                System.out.println("should be unreachable: method not found");
+                return inlineGraph;
+            }
+
+            if (!overrideMethod.canBeStaticallyBound()) {
+                System.out.println("should be unreachable: method can't be statically bound");
+                return inlineGraph;
+            }
+
+//            System.out.println("pre replacement: " + invoke.getTargetMethod().getDeclaringClass().getName() + invoke.getTargetMethod().getName());
+//            InliningUtil.replaceInvokeCallTarget(invoke, inlineGraph, InvokeKind.Special, overrideMethod);
+//            System.out.println("post replacement and pre-fuckup: " + invoke.getTargetMethod().getDeclaringClass().getName() + invoke.getTargetMethod().getName());
+
+            StructuredGraph newGraph = parseGraph(context.highTierContext, inlineGraph, overrideMethod);
+            inlineGraph.getDebug().forceDump(inlineGraph, "graph preinlining");
+
+            InliningUtil.inline(invoke, newGraph, false, overrideMethod);
+//            CallTree overrideMethodCallTree = new CallTree(overrideMethod);
+//            inline(context, null, overrideMethodCallTree);
+//            System.out.println(node.getNodeClass().toString());
+//            inlineGraph.removeFixed((FixedWithNextNode) node);
+            inlineGraph.getDebug().forceDump(inlineGraph, "graph post inlining");
+
+            System.out.println("Successful replacement and inlining from " + targetMethod.getName()
+                    + " in (" + inlineGraph.method().getDeclaringClass().getName() + inlineGraph.method().getName() + ")"
+                    + " to " + overrideMethod.getDeclaringClass().getName() + overrideMethod.getName());
+
+            replacementIdx++;
+            if (replacementIdx >= replacementsList.size())
+                break;
+        }
+
+        new DeadCodeEliminationPhase(Optional).apply(inlineGraph);
+        canonicalizer.apply(inlineGraph, context.highTierContext);
+
+        inlineGraph.getDebug().forceDump(inlineGraph, "after our changes");
+
+        return inlineGraph;
     }
 
     private void runImpl(InliningPhaseContext context) {
@@ -163,14 +250,6 @@ public class TruffleHostInliningPhase extends AbstractInliningPhase {
         debug.dump(DebugContext.VERBOSE_LEVEL, context.graph, "Before Truffle host inlining");
 
         CallTree root = new CallTree(rootMethod);
-
-        if (context.graph.isAdditionV2Target) {
-            System.out.println("replacement started");
-            context.graph.getDebug().forceDump(context.graph, "pre replacement");
-            replaceExecuteCallsWithDirect(context, context.graph);
-//            call.children = new ArrayList<>();
-            context.graph.getDebug().forceDump(context.graph, "post replacement");
-        }
 
         int round = 0;
         int inlineIndex = 0;
@@ -887,66 +966,6 @@ public class TruffleHostInliningPhase extends AbstractInliningPhase {
 //        }
 
         return duplicates.get();
-    }
-
-    private StructuredGraph replaceExecuteCallsWithDirect(InliningPhaseContext context, StructuredGraph inlineGraph) {
-        boolean isFirstReplaceDone = false;
-
-        for (Node node: inlineGraph.getNodes()) {
-            if (!(node instanceof Invoke)) {
-                continue;
-            }
-
-            Invoke invoke = (Invoke) node;
-            ResolvedJavaMethod targetMethod = invoke.getTargetMethod();
-
-            if (!targetMethod.getName().equals("executeLong"))
-                continue;
-
-            ResolvedJavaMethod overrideMethod = null;
-
-            if (!isFirstReplaceDone)
-                overrideMethod = StructuredGraph.localVarReadReplace;
-            else
-                overrideMethod = StructuredGraph.intLiteralReplace;
-
-            if (overrideMethod == null) {
-                System.out.println("should be unreachable: method not found");
-                return inlineGraph;
-            }
-
-            if (!overrideMethod.canBeStaticallyBound()) {
-                System.out.println("should be unreachable: method can't be statically bound");
-                return inlineGraph;
-            }
-
-//            System.out.println("pre replacement: " + invoke.getTargetMethod().getDeclaringClass().getName() + invoke.getTargetMethod().getName());
-//            InliningUtil.replaceInvokeCallTarget(invoke, inlineGraph, InvokeKind.Special, overrideMethod);
-//            System.out.println("post replacement and pre-fuckup: " + invoke.getTargetMethod().getDeclaringClass().getName() + invoke.getTargetMethod().getName());
-
-            StructuredGraph newGraph = parseGraph(context.highTierContext, inlineGraph, overrideMethod);
-            inlineGraph.getDebug().forceDump(inlineGraph, "graph preinlining");
-
-            InliningUtil.inline(invoke, newGraph, false, overrideMethod);
-//            CallTree overrideMethodCallTree = new CallTree(overrideMethod);
-//            inline(context, null, overrideMethodCallTree);
-//            System.out.println(node.getNodeClass().toString());
-//            inlineGraph.removeFixed((FixedWithNextNode) node);
-            inlineGraph.getDebug().forceDump(inlineGraph, "graph post inlining");
-
-            System.out.println("Successful replacement and inlining from " + targetMethod.getName()
-                    + " in (" + inlineGraph.method().getDeclaringClass().getName() + inlineGraph.method().getName() + ")"
-                    + " to " + overrideMethod.getDeclaringClass().getName() + overrideMethod.getName());
-
-            if (isFirstReplaceDone)
-                break;
-            isFirstReplaceDone = true;
-        }
-
-        new DeadCodeEliminationPhase(Optional).apply(inlineGraph);
-        canonicalizer.apply(inlineGraph, context.highTierContext);
-
-        return inlineGraph;
     }
 
     private StructuredGraph lookupGraph(InliningPhaseContext context, ResolvedJavaMethod method) {
