@@ -29,6 +29,7 @@ import static org.graalvm.compiler.phases.common.DeadCodeEliminationPhase.Option
 
 import java.io.ByteArrayOutputStream;
 import java.io.PrintStream;
+import java.lang.reflect.Method;
 import java.util.*;
 import java.util.concurrent.atomic.AtomicReference;
 
@@ -145,11 +146,13 @@ public class TruffleHostInliningPhase extends AbstractInliningPhase {
             var klass = graph.method().getDeclaringClass().getSuperclass();
             var supernodeAnnot = klass.getAnnotation(Supernode.class);
 
-            var child1 = supernodeAnnot.forChildren()[0];
-
             List<ResolvedJavaMethod> replacementsList = new ArrayList<>();
             for (var child: supernodeAnnot.forChildren()) {
-                var meth = getMethodFromClass(child1);
+//                Method meth = null;
+//                for (var childMethod: child.getMethods())
+//                    if (childMethod.getName().equals("executeLong"))
+//                        meth = childMethod;
+                var meth = getMethodFromClass(child);
                 assert meth != null;
                 replacementsList.add(meth);
             }
@@ -948,22 +951,11 @@ public class TruffleHostInliningPhase extends AbstractInliningPhase {
         }
         StructuredGraph inlineGraph = lookupGraph(context, targetMethod);
 
-       /* if (inlineGraph.isAdditionV2Target) {
-//            inlineGraph.getDebug().forceDump(inlineGraph, "pre replacement");
-            inlineGraph = replaceExecuteCallsWithDirect(context, inlineGraph);
-            call.children = new ArrayList<>();
-//            inlineGraph.getDebug().forceDump(inlineGraph, "post replacement");
-        }*/
-
         AtomicReference<UnmodifiableEconomicMap<Node, Node>> duplicates = new AtomicReference<>();
         canonicalizableNodes.addAll(InliningUtil.inlineForCanonicalization(invoke, inlineGraph, true, targetMethod,
                         (d) -> duplicates.set(d),
                         "Truffle Host Inlining",
                         "Truffle Host Inlining"));
-
-//        if (inlineGraph.shouldBeDevirtualizedLong) {// || inlineGraph.shouldBeDevirtualizedDouble)
-//            inlineGraph.getDebug().forceDump(inlineGraph, "post INLINING");
-//        }
 
         return duplicates.get();
     }
