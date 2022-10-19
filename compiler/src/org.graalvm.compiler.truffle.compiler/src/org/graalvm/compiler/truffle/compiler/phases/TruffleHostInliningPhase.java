@@ -49,6 +49,8 @@ import org.graalvm.compiler.nodes.cfg.ControlFlowGraph;
 import org.graalvm.compiler.nodes.graphbuilderconf.GraphBuilderConfiguration.Plugins;
 import org.graalvm.compiler.nodes.graphbuilderconf.GraphBuilderContext;
 import org.graalvm.compiler.nodes.graphbuilderconf.InlineInvokePlugin;
+import org.graalvm.compiler.nodes.java.AccessFieldNode;
+import org.graalvm.compiler.nodes.java.LoadFieldNode;
 import org.graalvm.compiler.nodes.java.MethodCallTargetNode;
 import org.graalvm.compiler.options.Option;
 import org.graalvm.compiler.options.OptionKey;
@@ -179,19 +181,38 @@ public class TruffleHostInliningPhase extends AbstractInliningPhase {
     private StructuredGraph replaceExecuteCallsWithDirect(InliningPhaseContext context, StructuredGraph inlineGraph, List<ResolvedJavaMethod> replacementsList) {
         inlineGraph.getDebug().forceDump(inlineGraph, "before our changes");
 
-        int replacementIdx = 0;
         for (Node node: inlineGraph.getNodes()) {
-            if (!(node instanceof Invoke)) {
+
+            // this whole logic is for detecting if the executeLong calls are written to the receiver or argument, therefore which to inline
+            // in retrospect this should probably be done through predecessors of the executeLong invokes, would simplify this a bit
+            if (!(node instanceof LoadFieldNode))
+                continue;
+
+            var loadFieldNode = (LoadFieldNode) node;
+            var fieldName = loadFieldNode.field().getName();
+
+            if (!fieldName.equals("receiver_") && !fieldName.equals("argument_")) {
                 continue;
             }
 
-            Invoke invoke = (Invoke) node;
-            ResolvedJavaMethod targetMethod = invoke.getTargetMethod();
-
-            if (!targetMethod.getName().equals("executeLong"))
+            var succ = node.successors().first();
+            if (!(succ instanceof IfNode))
                 continue;
 
-            ResolvedJavaMethod overrideMethod = replacementsList.get(replacementIdx);
+            var invokeNode = ((IfNode) succ).falseSuccessor().successors().first();
+            if (!(invokeNode instanceof Invoke)) {
+                System.out.println("unexpected, successor of begin wasn't an invoke");
+                continue;
+            }
+
+            Invoke invoke = (Invoke) invokeNode;
+            ResolvedJavaMethod targetMethod = invoke.getTargetMethod();
+
+            if (!targetMethod.getName().equals("executeLong")) {
+                continue;
+            }
+
+            ResolvedJavaMethod overrideMethod = fieldName.equals("receiver_") ? replacementsList.get(0) : replacementsList.get(1);
 
             if (overrideMethod == null) {
                 System.out.println("should be unreachable: method not found");
@@ -220,10 +241,6 @@ public class TruffleHostInliningPhase extends AbstractInliningPhase {
             System.out.println("Successful replacement and inlining from " + targetMethod.getName()
                     + " in (" + inlineGraph.method().getDeclaringClass().getName() + inlineGraph.method().getName() + ")"
                     + " to " + overrideMethod.getDeclaringClass().getName() + overrideMethod.getName());
-
-            replacementIdx++;
-            if (replacementIdx >= replacementsList.size())
-                break;
         }
 
         new DeadCodeEliminationPhase(Optional).apply(inlineGraph);
