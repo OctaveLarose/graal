@@ -462,7 +462,7 @@ public final class StructuredGraph extends Graph implements JavaMethodContext {
 
     public static final boolean NO_PROFILING_INFO = false;
 
-    public boolean isAdditionV2Target = false;
+    public boolean isSupernodeTarget = false;
 
     public static List<ResolvedJavaMethod> executeLongList = new ArrayList<>();
 
@@ -485,16 +485,14 @@ public final class StructuredGraph extends Graph implements JavaMethodContext {
         this.rootMethod = method;
 
         if (method != null && !method.getClass().getName().contains("PointsToAnalysisMethod")
-                && method.getDeclaringClass().getName().startsWith("Ltrufflesom/interpreter/nodes")
+                && method.getDeclaringClass().getName().startsWith("Ltrufflesom")
                 && method.getName().equals("executeLong")) {
             executeLongList.add(method);
         }
 
-        if (isMethod(method, "Ltrufflesom/primitives/arithmetic/AdditionV2PrimFactory$AdditionV2PrimNodeGen;", "executeGeneric")) {
-            this.isAdditionV2Target = true;
+        if (isMethod(method, "Ltrufflesom/interpreter/nodes/LocalVariableV2NodeFactory$LocalVariableWriteV2NodeGen;", "executeGeneric")) {
+            this.isSupernodeTarget = true;
         }
-
-        // TODO if nonlocalvariablewritev2, replace
 
         this.graphId = uniqueGraphIds.incrementAndGet();
         this.compilationId = compilationId;

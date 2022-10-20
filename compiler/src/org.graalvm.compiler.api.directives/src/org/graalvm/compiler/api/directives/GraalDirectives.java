@@ -32,6 +32,7 @@ import java.lang.annotation.ElementType;
 import java.lang.annotation.Retention;
 import java.lang.annotation.RetentionPolicy;
 import java.lang.annotation.Target;
+import java.util.List;
 
 // JaCoCo Exclude
 
@@ -592,9 +593,17 @@ public final class GraalDirectives {
     @Target({ElementType.TYPE})
     public @interface Supernode {
 
-        Class<?>[] forChildren() default {};
-
-        // Methods of the children to be fetched and replaced, for now we assume it's always executeLong
+        // Children nodes in the AST to be inlined
+        public Class<?>[] forChildren();
+        public Class<?>[] replaceChildWith() default {};
+//
+//        // Methods of the children to be fetched and replaced, for now we assume it's always executeLong
         String methodName() default "executeLong";
+
+//        @Retention(RetentionPolicy.RUNTIME)
+//        @Target({ElementType.TYPE})
+//        public @interface List {
+//            public Supernode[] subtrees();
+//        }
     }
 }

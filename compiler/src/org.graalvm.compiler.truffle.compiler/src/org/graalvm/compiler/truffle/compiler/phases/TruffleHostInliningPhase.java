@@ -29,16 +29,12 @@ import static org.graalvm.compiler.phases.common.DeadCodeEliminationPhase.Option
 
 import java.io.ByteArrayOutputStream;
 import java.io.PrintStream;
-import java.lang.reflect.Method;
 import java.util.*;
 import java.util.concurrent.atomic.AtomicReference;
 
+import org.graalvm.collections.*;
 import org.graalvm.compiler.api.directives.GraalDirectives.Supernode;
 import jdk.vm.ci.meta.*;
-import org.graalvm.collections.EconomicMap;
-import org.graalvm.collections.EconomicSet;
-import org.graalvm.collections.Equivalence;
-import org.graalvm.collections.UnmodifiableEconomicMap;
 import org.graalvm.compiler.core.phases.HighTier;
 import org.graalvm.compiler.debug.DebugContext;
 import org.graalvm.compiler.graph.Node;
@@ -49,7 +45,6 @@ import org.graalvm.compiler.nodes.cfg.ControlFlowGraph;
 import org.graalvm.compiler.nodes.graphbuilderconf.GraphBuilderConfiguration.Plugins;
 import org.graalvm.compiler.nodes.graphbuilderconf.GraphBuilderContext;
 import org.graalvm.compiler.nodes.graphbuilderconf.InlineInvokePlugin;
-import org.graalvm.compiler.nodes.java.AccessFieldNode;
 import org.graalvm.compiler.nodes.java.LoadFieldNode;
 import org.graalvm.compiler.nodes.java.MethodCallTargetNode;
 import org.graalvm.compiler.options.Option;
@@ -143,26 +138,59 @@ public class TruffleHostInliningPhase extends AbstractInliningPhase {
         var inliningPhaseContext = new InliningPhaseContext(highTierContext, graph, TruffleCompilerRuntime.getRuntimeIfAvailable(), isBytecodeInterpreterSwitch(method));
         runImpl(inliningPhaseContext);
 
-        if (graph.isAdditionV2Target) {
+        if (graph.isSupernodeTarget) {
             System.out.println("replacement started");
+            graph.getDebug().forceDump(graph, "parent graph pre replacements");
             var klass = graph.method().getDeclaringClass().getSuperclass();
+
             var supernodeAnnot = klass.getAnnotation(Supernode.class);
+            var resolvedSupernodeMethods = getResolvedJavaMethodsFromSupernode(supernodeAnnot);
 
-            List<ResolvedJavaMethod> replacementsList = new ArrayList<>();
-            for (var child: supernodeAnnot.forChildren()) {
-//                Method meth = null;
-//                for (var childMethod: child.getMethods())
-//                    if (childMethod.getName().equals("executeLong"))
-//                        meth = childMethod;
-                var meth = getMethodFromClass(child);
-                assert meth != null;
-                replacementsList.add(meth);
+            // fetching graphs for each children (for now only one)
+            var supernodeChildrenGraphs = new StructuredGraph[] {parseGraph(highTierContext, graph, resolvedSupernodeMethods.getLeft().get(0))};
+
+            for (var supernodeChildGraph: supernodeChildrenGraphs) {
+                var replacementsList = resolvedSupernodeMethods.getRight();
+                replaceExecuteCallsWithDirect(inliningPhaseContext, supernodeChildGraph, replacementsList);
+
+                for (Node node: graph.getNodes()) {
+                    if (!(node instanceof Invoke))
+                        continue;
+                    Invoke invoke = (Invoke) node;
+                    ResolvedJavaMethod targetMethod = invoke.getTargetMethod();
+
+                    if (targetMethod.getName().equals("executeLong")) {
+                        InliningUtil.inline(invoke, supernodeChildGraph, false, resolvedSupernodeMethods.getLeft().get(0));
+                        System.out.println("REPLACEMENT DONE for executeLong in parent graph");
+                        break;
+                    }
+                }
             }
-
-//            graph.getDebug().forceDump(graph, "pre replacement");
-            replaceExecuteCallsWithDirect(inliningPhaseContext, graph, replacementsList);
-//            graph.getDebug().forceDump(graph, "post replacement");
+            graph.getDebug().forceDump(graph, "parent graph post replacements");
         }
+    }
+
+    Pair<List<ResolvedJavaMethod>, List<ResolvedJavaMethod>> getResolvedJavaMethodsFromSupernode(Supernode supernode) {
+        var children = supernode.forChildren();
+        var replacements = supernode.replaceChildWith();
+
+        List<ResolvedJavaMethod> childrenMethods = new ArrayList<>();
+        for (var child: children) {
+            var meth = getMethodFromClass(child);
+            if (meth == null)
+                System.out.println("no method found for " + child.getName());
+            childrenMethods.add(meth);
+        }
+
+        List<ResolvedJavaMethod> replacementsList = new ArrayList<>();
+        for (var child: replacements) {
+            var meth = getMethodFromClass(child);
+            if (meth == null)
+                System.out.println("no method found for " + child.getName());
+            replacementsList.add(meth);
+        }
+
+        return Pair.create(childrenMethods, replacementsList);
     }
 
     ResolvedJavaMethod getMethodFromClass(Class<?> klass) {
@@ -182,33 +210,27 @@ public class TruffleHostInliningPhase extends AbstractInliningPhase {
         inlineGraph.getDebug().forceDump(inlineGraph, "before our changes");
 
         for (Node node: inlineGraph.getNodes()) {
-
-            // this whole logic is for detecting if the executeLong calls are written to the receiver or argument, therefore which to inline
-            // in retrospect this should probably be done through predecessors of the executeLong invokes, would simplify this a bit
-            if (!(node instanceof LoadFieldNode))
+            if (!(node instanceof Invoke))
                 continue;
-
-            var loadFieldNode = (LoadFieldNode) node;
-            var fieldName = loadFieldNode.field().getName();
-
-            if (!fieldName.equals("receiver_") && !fieldName.equals("argument_")) {
-                continue;
-            }
-
-            var succ = node.successors().first();
-            if (!(succ instanceof IfNode))
-                continue;
-
-            var invokeNode = ((IfNode) succ).falseSuccessor().successors().first();
-            if (!(invokeNode instanceof Invoke)) {
-                System.out.println("unexpected, successor of begin wasn't an invoke");
-                continue;
-            }
-
-            Invoke invoke = (Invoke) invokeNode;
+            Invoke invoke = (Invoke) node;
             ResolvedJavaMethod targetMethod = invoke.getTargetMethod();
 
             if (!targetMethod.getName().equals("executeLong")) {
+                continue;
+            }
+
+            Node loadFieldNode = node;
+            for (int i = 0; i < 3; i++) {
+                loadFieldNode = loadFieldNode.predecessor();
+            }
+
+            if (!(loadFieldNode instanceof LoadFieldNode))
+                continue;
+
+            var fieldName = ((LoadFieldNode)loadFieldNode).field().getName();
+
+            // we can check if the field has the @Child annotation instead maybe
+            if (!fieldName.equals("receiver_") && !fieldName.equals("argument_")) {
                 continue;
             }
 
