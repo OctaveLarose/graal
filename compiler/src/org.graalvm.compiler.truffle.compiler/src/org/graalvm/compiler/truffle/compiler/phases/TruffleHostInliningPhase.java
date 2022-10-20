@@ -197,7 +197,9 @@ public class TruffleHostInliningPhase extends AbstractInliningPhase {
         ResolvedJavaMethod correctMethod = null;
         String className = klass.getName();
 
-        for (var executeLong: StructuredGraph.executeLongList) {
+        // copying because apparently we get concurrent modification errors otherwise? which is very weird?
+        var copiedList = new ArrayList<>(StructuredGraph.executeLongList);
+        for (var executeLong: copiedList) {
             var type = executeLong.getDeclaringClass();
             if (type.toString().contains(className))
                 correctMethod = executeLong;
