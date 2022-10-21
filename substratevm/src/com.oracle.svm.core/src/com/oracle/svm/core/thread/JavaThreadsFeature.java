@@ -30,16 +30,16 @@ import java.util.Map;
 import org.graalvm.nativeimage.ImageSingletons;
 import org.graalvm.nativeimage.Platform;
 import org.graalvm.nativeimage.Platforms;
-import org.graalvm.nativeimage.hosted.Feature;
 
-import com.oracle.svm.core.annotate.AutomaticFeature;
+import com.oracle.svm.core.feature.InternalFeature;
+import com.oracle.svm.core.feature.AutomaticallyRegisteredFeature;
 import com.oracle.svm.core.util.ConcurrentIdentityHashMap;
 import com.oracle.svm.core.util.UserError;
 import com.oracle.svm.util.ClassUtil;
 
-@AutomaticFeature
+@AutomaticallyRegisteredFeature
 @Platforms(Platform.HOSTED_ONLY.class)
-class JavaThreadsFeature implements Feature {
+class JavaThreadsFeature implements InternalFeature {
 
     static JavaThreadsFeature singleton() {
         return ImageSingletons.lookup(JavaThreadsFeature.class);
@@ -131,7 +131,10 @@ class JavaThreadsFeature implements Feature {
     }
 
     static long threadId(Thread thread) {
-        return thread == PlatformThreads.singleton().mainThread ? 1 : thread.getId();
+        if (thread == PlatformThreads.singleton().mainThread) {
+            return 1;
+        }
+        return JavaThreads.getThreadId(thread);
     }
 
     private static final String AUTONUMBER_PREFIX = "Thread-";

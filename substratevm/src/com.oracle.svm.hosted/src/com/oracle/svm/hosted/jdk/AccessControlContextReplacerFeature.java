@@ -32,16 +32,16 @@ import java.util.HashMap;
 import java.util.Map;
 
 import org.graalvm.compiler.serviceprovider.JavaVersionUtil;
-import org.graalvm.nativeimage.hosted.Feature;
 
-import com.oracle.svm.core.annotate.AutomaticFeature;
+import com.oracle.svm.core.feature.InternalFeature;
 import com.oracle.svm.core.jdk.AccessControllerUtil;
+import com.oracle.svm.core.feature.AutomaticallyRegisteredFeature;
 import com.oracle.svm.core.util.VMError;
 import com.oracle.svm.util.ReflectionUtil;
 
-@AutomaticFeature
+@AutomaticallyRegisteredFeature
 @SuppressWarnings({"unused"})
-class AccessControlContextReplacerFeature implements Feature {
+class AccessControlContextReplacerFeature implements InternalFeature {
 
     static Map<String, AccessControlContext> allowedContexts = new HashMap<>();
 
@@ -84,7 +84,9 @@ class AccessControlContextReplacerFeature implements Feature {
 
         if (JavaVersionUtil.JAVA_SPEC >= 11) {
             allowContextIfExists("java.security.AccessController$AccHolder", "innocuousAcc");
-            allowContextIfExists("java.util.concurrent.ForkJoinPool$DefaultForkJoinWorkerThreadFactory", "ACC");
+            if (JavaVersionUtil.JAVA_SPEC < 19) {
+                allowContextIfExists("java.util.concurrent.ForkJoinPool$DefaultForkJoinWorkerThreadFactory", "ACC");
+            }
         }
         if (JavaVersionUtil.JAVA_SPEC < 17) {
             allowContextIfExists("java.util.concurrent.ForkJoinWorkerThread", "INNOCUOUS_ACC");
@@ -92,7 +94,7 @@ class AccessControlContextReplacerFeature implements Feature {
         if (JavaVersionUtil.JAVA_SPEC >= 11 && JavaVersionUtil.JAVA_SPEC < 17) {
             allowContextIfExists("java.util.concurrent.ForkJoinPool$InnocuousForkJoinWorkerThreadFactory", "ACC");
         }
-        if (JavaVersionUtil.JAVA_SPEC >= 17) {
+        if (JavaVersionUtil.JAVA_SPEC >= 17 && JavaVersionUtil.JAVA_SPEC < 19) {
             allowContextIfExists("java.util.concurrent.ForkJoinPool$WorkQueue", "INNOCUOUS_ACC");
             allowContextIfExists("java.util.concurrent.ForkJoinPool$DefaultCommonPoolForkJoinWorkerThreadFactory", "ACC");
         }

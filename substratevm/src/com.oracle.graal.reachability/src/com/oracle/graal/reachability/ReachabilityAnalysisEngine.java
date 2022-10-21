@@ -32,8 +32,9 @@ import java.util.HashSet;
 import java.util.Set;
 import java.util.concurrent.ForkJoinPool;
 
-import com.oracle.graal.pointsto.meta.InvokeInfo;
-import com.oracle.graal.pointsto.util.AnalysisError;
+import jdk.vm.ci.code.BytecodePosition;
+import jdk.vm.ci.meta.JavaConstant;
+import jdk.vm.ci.meta.JavaKind;
 import org.graalvm.compiler.debug.Indent;
 import org.graalvm.compiler.nodes.StructuredGraph;
 import org.graalvm.compiler.options.OptionValues;
@@ -46,14 +47,11 @@ import com.oracle.graal.pointsto.meta.AnalysisMethod;
 import com.oracle.graal.pointsto.meta.AnalysisType;
 import com.oracle.graal.pointsto.meta.AnalysisUniverse;
 import com.oracle.graal.pointsto.meta.HostedProviders;
+import com.oracle.graal.pointsto.meta.InvokeInfo;
+import com.oracle.graal.pointsto.util.AnalysisError;
 import com.oracle.graal.pointsto.util.CompletionExecutor;
 import com.oracle.graal.pointsto.util.Timer;
 import com.oracle.graal.pointsto.util.TimerCollection;
-
-import jdk.vm.ci.code.BytecodePosition;
-import jdk.vm.ci.meta.JavaConstant;
-import jdk.vm.ci.meta.JavaKind;
-import jdk.vm.ci.meta.ResolvedJavaMethod;
 
 /**
  * Core class of the Reachability Analysis. Contains the crucial part: resolving virtual methods.
@@ -69,18 +67,29 @@ import jdk.vm.ci.meta.ResolvedJavaMethod;
  * @see ReachabilityAnalysisMethod
  */
 public abstract class ReachabilityAnalysisEngine extends AbstractAnalysisEngine {
-    private final MethodSummaryProvider methodSummaryProvider;
-    private final Timer summaryTimer;
-
+    private final Timer reachabilityTimer;
     private final Set<AnalysisType> allInstantiatedTypes;
 
+    private final ReachabilityMethodProcessingHandler reachabilityMethodProcessingHandler;
+
     public ReachabilityAnalysisEngine(OptionValues options, AnalysisUniverse universe, HostedProviders providers, HostVM hostVM, ForkJoinPool executorService, Runnable heartbeatCallback,
-                    UnsupportedFeatures unsupportedFeatures, MethodSummaryProvider methodSummaryProvider, TimerCollection timerCollection) {
+                    UnsupportedFeatures unsupportedFeatures, TimerCollection timerCollection,
+                    ReachabilityMethodProcessingHandler reachabilityMethodProcessingHandler) {
         super(options, universe, providers, hostVM, executorService, heartbeatCallback, unsupportedFeatures, timerCollection);
-        this.methodSummaryProvider = methodSummaryProvider;
-        this.summaryTimer = timerCollection.createTimer("((summaries))", false);
-        ReachabilityAnalysisType objectType = assertReachabilityAnalysisType(metaAccess.lookupJavaType(Object.class));
+        this.executor.init(getTiming());
+        this.reachabilityTimer = timerCollection.createTimer("(reachability)");
+
+        ReachabilityAnalysisType objectType = (ReachabilityAnalysisType) metaAccess.lookupJavaType(Object.class);
         this.allInstantiatedTypes = Collections.unmodifiableSet(objectType.getInstantiatedSubtypes());
+        this.reachabilityMethodProcessingHandler = reachabilityMethodProcessingHandler;
+    }
+
+    /**
+     * Timing is not implemented ATM.
+     */
+    @Override
+    protected CompletionExecutor.Timing getTiming() {
+        return null;
     }
 
     @Override
@@ -134,7 +143,7 @@ public abstract class ReachabilityAnalysisEngine extends AbstractAnalysisEngine 
 
     @Override
     public AnalysisMethod addRootMethod(AnalysisMethod m, boolean invokeSpecial) {
-        ReachabilityAnalysisMethod method = assertReachabilityAnalysisMethod(m);
+        ReachabilityAnalysisMethod method = (ReachabilityAnalysisMethod) m;
         if (m.isStatic()) {
             if (!method.registerAsDirectRootMethod()) {
                 return method;
@@ -155,7 +164,7 @@ public abstract class ReachabilityAnalysisEngine extends AbstractAnalysisEngine 
         return method;
     }
 
-    private void markMethodImplementationInvoked(ReachabilityAnalysisMethod method) {
+    public void markMethodImplementationInvoked(ReachabilityAnalysisMethod method) {
         // Unlinked methods cannot be parsed
         if (!method.getWrapped().getDeclaringClass().isLinked()) {
             return;
@@ -169,59 +178,15 @@ public abstract class ReachabilityAnalysisEngine extends AbstractAnalysisEngine 
     @SuppressWarnings("try")
     private void onMethodImplementationInvoked(ReachabilityAnalysisMethod method) {
         try {
-            MethodSummary summary;
-            try (Timer.StopTimer t = summaryTimer.start()) {
-                summary = methodSummaryProvider.getSummary(this, method);
-            }
-            processSummary(method, summary);
+            reachabilityMethodProcessingHandler.onMethodReachable(this, method);
         } catch (Throwable ex) {
             getUnsupportedFeatures().addMessage(method.format("%H.%n(%p)"), method, ex.getLocalizedMessage(), null, ex);
         }
     }
 
-    /**
-     * Use the summary to update the analysis state.
-     */
-    private void processSummary(ReachabilityAnalysisMethod method, MethodSummary summary) {
-        for (AnalysisMethod invokedMethod : summary.invokedMethods) {
-            markMethodInvoked(assertReachabilityAnalysisMethod(invokedMethod));
-        }
-        for (AnalysisMethod invokedMethod : summary.implementationInvokedMethods) {
-            markMethodImplementationInvoked(assertReachabilityAnalysisMethod(invokedMethod));
-        }
-        for (AnalysisType type : summary.accessedTypes) {
-            markTypeReachable(type);
-        }
-        for (AnalysisType type : summary.instantiatedTypes) {
-            markTypeInstantiated(type);
-        }
-        for (AnalysisField field : summary.readFields) {
-            markFieldRead(field);
-            markTypeReachable(field.getType());
-        }
-        for (AnalysisField field : summary.writtenFields) {
-            markFieldWritten(field);
-        }
-        for (JavaConstant constant : summary.embeddedConstants) {
-            if (constant.getJavaKind() == JavaKind.Object && constant.isNonNull()) {
-                if (this.scanningPolicy().trackConstant(this, constant)) {
-                    BytecodePosition position = new BytecodePosition(null, method, 0);
-                    getUniverse().registerEmbeddedRoot(constant, position);
-
-                    Object obj = getSnippetReflectionProvider().asObject(Object.class, constant);
-                    AnalysisType type = getMetaAccess().lookupJavaType(obj.getClass());
-                    markTypeInHeap(type);
-                }
-            }
-        }
-        for (AnalysisMethod rootMethod : summary.foreignCallTargets) {
-            addRootMethod(rootMethod, false);
-        }
-    }
-
     @Override
     public boolean markTypeInHeap(AnalysisType t) {
-        ReachabilityAnalysisType type = assertReachabilityAnalysisType(t);
+        ReachabilityAnalysisType type = (ReachabilityAnalysisType) t;
         if (!type.registerAsInHeap()) {
             return false;
         }
@@ -233,7 +198,7 @@ public abstract class ReachabilityAnalysisEngine extends AbstractAnalysisEngine 
 
     @Override
     public boolean markTypeInstantiated(AnalysisType t) {
-        ReachabilityAnalysisType type = assertReachabilityAnalysisType(t);
+        ReachabilityAnalysisType type = (ReachabilityAnalysisType) t;
         if (!type.registerAsAllocated(null)) {
             return false;
         }
@@ -241,6 +206,22 @@ public abstract class ReachabilityAnalysisEngine extends AbstractAnalysisEngine 
             schedule(() -> onTypeInstantiated(type));
         }
         return true;
+    }
+
+    /**
+     * Processes an embedded constant found in a method graph/summary.
+     */
+    public void handleEmbeddedConstant(ReachabilityAnalysisMethod method, JavaConstant constant) {
+        if (constant.getJavaKind() == JavaKind.Object && constant.isNonNull()) {
+            if (scanningPolicy().trackConstant(this, constant)) {
+                BytecodePosition position = new BytecodePosition(null, method, 0);
+                getUniverse().registerEmbeddedRoot(constant, position);
+
+                Object obj = getSnippetReflectionProvider().asObject(Object.class, constant);
+                AnalysisType type = getMetaAccess().lookupJavaType(obj.getClass());
+                markTypeInHeap(type);
+            }
+        }
     }
 
     /**
@@ -277,7 +258,7 @@ public abstract class ReachabilityAnalysisEngine extends AbstractAnalysisEngine 
      */
     private void onTypeInstantiated(ReachabilityAnalysisType type) {
         type.forAllSuperTypes(current -> {
-            Set<ReachabilityAnalysisMethod> invokedMethods = assertReachabilityAnalysisType(current).getInvokedVirtualMethods();
+            Set<ReachabilityAnalysisMethod> invokedMethods = ((ReachabilityAnalysisType) current).getInvokedVirtualMethods();
             for (ReachabilityAnalysisMethod curr : invokedMethods) {
                 ReachabilityAnalysisMethod method = type.resolveConcreteMethod(curr, current);
                 if (method != null) {
@@ -287,7 +268,7 @@ public abstract class ReachabilityAnalysisEngine extends AbstractAnalysisEngine 
         });
     }
 
-    private void markMethodInvoked(ReachabilityAnalysisMethod method) {
+    public void markMethodInvoked(ReachabilityAnalysisMethod method) {
         if (!method.registerAsInvoked()) {
             return;
         }
@@ -303,18 +284,13 @@ public abstract class ReachabilityAnalysisEngine extends AbstractAnalysisEngine 
         return true;
     }
 
-    @Override
-    public void postTask(CompletionExecutor.DebugContextRunnable task) {
-        executor.execute(task);
-    }
-
     @SuppressWarnings("try")
     private void runReachability() throws InterruptedException {
         try (Timer.StopTimer t = reachabilityTimer.start()) {
             executor.start();
             executor.complete();
             executor.shutdown();
-            executor.init(timing);
+            executor.init(getTiming());
         }
     }
 
@@ -332,7 +308,7 @@ public abstract class ReachabilityAnalysisEngine extends AbstractAnalysisEngine 
         Deque<ReachabilityAnalysisMethod> queue = new ArrayDeque<>();
 
         for (AnalysisMethod m : universe.getMethods()) {
-            ReachabilityAnalysisMethod method = assertReachabilityAnalysisMethod(m);
+            ReachabilityAnalysisMethod method = ((ReachabilityAnalysisMethod) m);
             if (method.isDirectRootMethod() || method.isEntryPoint()) {
                 if (seen.add(method)) {
                     queue.add(method);
@@ -354,7 +330,7 @@ public abstract class ReachabilityAnalysisEngine extends AbstractAnalysisEngine 
             ReachabilityAnalysisMethod method = queue.removeFirst();
             for (InvokeInfo invoke : method.getInvokes()) {
                 for (AnalysisMethod c : invoke.getCallees()) {
-                    ReachabilityAnalysisMethod callee = assertReachabilityAnalysisMethod(c);
+                    ReachabilityAnalysisMethod callee = (ReachabilityAnalysisMethod) c;
                     callee.addCaller(invoke.getPosition());
                     if (seen.add(callee)) {
                         callee.setReason(invoke.getPosition());
@@ -390,29 +366,7 @@ public abstract class ReachabilityAnalysisEngine extends AbstractAnalysisEngine 
 
     @SuppressWarnings("try")
     public void processGraph(StructuredGraph graph) {
-        MethodSummary summary;
-        try (Timer.StopTimer t = summaryTimer.start()) {
-            summary = methodSummaryProvider.getSummary(this, graph);
-        }
-        ReachabilityAnalysisMethod method = analysisMethod(graph.method());
-        processSummary(method, summary);
+        reachabilityMethodProcessingHandler.processGraph(this, graph);
     }
 
-    private ReachabilityAnalysisMethod analysisMethod(ResolvedJavaMethod method) {
-        return assertReachabilityAnalysisMethod(method instanceof AnalysisMethod ? ((AnalysisMethod) method) : universe.lookup(method));
-    }
-
-    public static ReachabilityAnalysisMethod assertReachabilityAnalysisMethod(AnalysisMethod method) {
-        return (ReachabilityAnalysisMethod) method;
-    }
-
-    public static ReachabilityAnalysisType assertReachabilityAnalysisType(AnalysisType type) {
-        return (ReachabilityAnalysisType) type;
-    }
-
-    @Override
-    public void printTimers() {
-        summaryTimer.print();
-        super.printTimers();
-    }
 }

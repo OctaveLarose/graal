@@ -116,9 +116,9 @@ final class GraalRuntimeSupport extends RuntimeSupport {
             osrMetadata = initializeBytecodeOSRMetadata(osrNode);
         }
 
-        // metadata can be set to DISABLED during initialization (above) or dynamically after
+        // metadata can be disabled during initialization (above) or dynamically after
         // failed compilation.
-        if (osrMetadata == BytecodeOSRMetadata.DISABLED) {
+        if (osrMetadata.isDisabled()) {
             return false;
         } else {
             return osrMetadata.incrementAndPoll();
@@ -131,12 +131,13 @@ final class GraalRuntimeSupport extends RuntimeSupport {
             BytecodeOSRMetadata metadata = (BytecodeOSRMetadata) osrNode.getOSRMetadata();
             if (metadata == null) {
                 OptimizedCallTarget callTarget = (OptimizedCallTarget) node.getRootNode().getCallTarget();
-                if (callTarget.getOptionValue(PolyglotCompilerOptions.OSR)) {
-                    metadata = new BytecodeOSRMetadata(osrNode, callTarget.getOptionValue(PolyglotCompilerOptions.OSRCompilationThreshold));
+                if (callTarget.engine.compilation && callTarget.getOptionValue(PolyglotCompilerOptions.OSR)) {
+                    metadata = new BytecodeOSRMetadata(osrNode,
+                                    callTarget.getOptionValue(PolyglotCompilerOptions.OSRCompilationThreshold),
+                                    callTarget.getOptionValue(PolyglotCompilerOptions.OSRMaxCompilationReAttempts));
                 } else {
                     metadata = BytecodeOSRMetadata.DISABLED;
                 }
-
                 osrNode.setOSRMetadata(metadata);
             }
             return metadata;

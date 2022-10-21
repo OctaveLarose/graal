@@ -24,14 +24,18 @@
  */
 package com.oracle.svm.core.jdk;
 
+import java.nio.charset.Charset;
+import java.util.function.BooleanSupplier;
+
+import org.graalvm.nativeimage.ImageSingletons;
+
 import com.oracle.svm.core.annotate.Substitute;
 import com.oracle.svm.core.annotate.TargetClass;
 import com.oracle.svm.core.annotate.TargetElement;
+import com.oracle.svm.core.jdk.localization.substitutions.Target_java_nio_charset_Charset;
 import com.oracle.svm.util.ReflectionUtil;
-import org.graalvm.nativeimage.ImageSingletons;
 
-import java.lang.reflect.Method;
-import java.util.function.BooleanSupplier;
+import jdk.internal.util.StaticProperty;
 
 /**
  * This class provides JDK-internal access to values that are also available via system properties.
@@ -40,7 +44,7 @@ import java.util.function.BooleanSupplier;
  * same methods also used to initialize the system properties.
  */
 @Substitute
-@TargetClass(className = "jdk.internal.util.StaticProperty")
+@TargetClass(jdk.internal.util.StaticProperty.class)
 @SuppressWarnings("unused")
 final class Target_jdk_internal_util_StaticProperty {
 
@@ -95,23 +99,59 @@ final class Target_jdk_internal_util_StaticProperty {
         return ImageSingletons.lookup(SystemPropertiesSupport.class).savedProperties.get("jdk.serialFilterFactory");
     }
 
+    private abstract static class StaticPropertyMethodAvailable implements BooleanSupplier {
+
+        private final String methodName;
+
+        protected StaticPropertyMethodAvailable(String methodName) {
+            this.methodName = methodName;
+        }
+
+        @Override
+        public boolean getAsBoolean() {
+            return ReflectionUtil.lookupMethod(true, StaticProperty.class, methodName) != null;
+        }
+    }
+
     /*
      * Method jdkSerialFilterFactory is present in some versions of the JDK11 and not in the other.
      * It is always present in the JDK17. We need to check if this method should be substituted by
      * checking if it exists in the running JDK version.
      */
-    private static class StaticPropertyJdkSerialFilterFactoryAvailable implements BooleanSupplier {
-        @Override
-        public boolean getAsBoolean() {
-            Method method;
-            try {
-                method = ReflectionUtil.lookupMethod(true, Class.forName("jdk.internal.util.StaticProperty"),
-                                "jdkSerialFilterFactory");
-            } catch (ClassNotFoundException e) {
-                return false;
-            }
-            return method != null;
+    private static class StaticPropertyJdkSerialFilterFactoryAvailable extends StaticPropertyMethodAvailable {
+        protected StaticPropertyJdkSerialFilterFactoryAvailable() {
+            super("jdkSerialFilterFactory");
         }
     }
 
+    @Substitute
+    @TargetElement(onlyWith = JDK17OrLater.class)
+    public static String nativeEncoding() {
+        return ImageSingletons.lookup(SystemPropertiesSupport.class).savedProperties.get("native.encoding");
+    }
+
+    @Substitute
+    @TargetElement(onlyWith = JDK19OrLater.class)
+    public static String fileEncoding() {
+        return ImageSingletons.lookup(SystemPropertiesSupport.class).savedProperties.get("file.encoding");
+    }
+
+    @Substitute
+    @TargetElement(onlyWith = JDK19OrLater.class)
+    public static String javaPropertiesDate() {
+        return ImageSingletons.lookup(SystemPropertiesSupport.class).savedProperties.getOrDefault("java.properties.date", null);
+    }
+
+    @Substitute
+    @TargetElement(onlyWith = JDK19OrLater.class)
+    public static String jnuEncoding() {
+        return ImageSingletons.lookup(SystemPropertiesSupport.class).savedProperties.get("sun.jnu.encoding");
+    }
+
+    @Substitute
+    @TargetElement(onlyWith = JDK19OrLater.class)
+    public static Charset jnuCharset() {
+        String jnuEncoding = ImageSingletons.lookup(SystemPropertiesSupport.class).savedProperties.get("sun.jnu.encoding");
+        return Target_java_nio_charset_Charset.forName(jnuEncoding, Charset.defaultCharset());
+    }
 }

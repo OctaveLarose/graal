@@ -269,9 +269,6 @@ class RenaissanceNativeImageBenchmarkSuite(mx_java_benchmarks.RenaissanceBenchma
                 return lib.get_path(True)
         return None
 
-    def availableSuiteVersions(self):
-        return ["0.9.0", "0.10.0", "0.11.0", "0.12.0", "0.13.0", "0.14.0"]
-
     def renaissance_unpacked(self):
         return extract_archive(self.renaissancePath(), 'renaissance.extracted')
 
@@ -552,19 +549,19 @@ _daCapo_exclude_lib = {
 }
 
 class DaCapoNativeImageBenchmarkSuite(mx_java_benchmarks.DaCapoBenchmarkSuite, BaseDaCapoNativeImageBenchmarkSuite, mx_sdk_benchmark.NativeImageBenchmarkMixin): #pylint: disable=too-many-ancestors
-    def name(self):
-        return 'dacapo-native-image'
-
     '''
     Some methods in DaCapo source are modified because they relied on the jar's nested structure,
     e.g. loading all configuration files for benchmarks from a nested directory.
     Therefore, this library is built from the source.
     '''
-    def dacapo_libname(self):
-        return 'DACAPO_SVM'
+    def name(self):
+        return 'dacapo-native-image'
+
+    def benchSuiteName(self, bmSuiteArgs=None):
+        return 'dacapo'
 
     def daCapoPath(self):
-        lib = mx.library(self.dacapo_libname(), False)
+        lib = mx.library(self.daCapoLibraryName(), False)
         if lib:
             return lib.get_path(True)
         return None
@@ -572,8 +569,9 @@ class DaCapoNativeImageBenchmarkSuite(mx_java_benchmarks.DaCapoBenchmarkSuite, B
     def daCapoSuiteTitle(self):
         return super(DaCapoNativeImageBenchmarkSuite, self).suite_title()
 
-    def benchSuiteName(self, bmSuiteArgs=None):
-        return 'dacapo'
+    def availableSuiteVersions(self):
+        # This version also ships a custom harness class to allow native image to find the entry point in the nested jar
+        return ["9.12-MR1-git+2baec49"]
 
     def daCapoIterations(self):
         return _daCapo_iterations
@@ -777,3 +775,31 @@ class ConsoleNativeImageBenchmarkSuite(mx_java_benchmarks.ConsoleBenchmarkSuite,
 
 
 mx_benchmark.add_bm_suite(ConsoleNativeImageBenchmarkSuite())
+
+
+class SpecJVM2008NativeImageBenchmarkSuite(mx_java_benchmarks.SpecJvm2008BenchmarkSuite, mx_sdk_benchmark.NativeImageBenchmarkMixin): #pylint: disable=too-many-ancestors
+    """
+    SpecJVM2008 for Native Image
+    """
+
+    def name(self):
+        return 'specjvm2008-native-image'
+
+    def benchSuiteName(self, bmSuiteArgs=None):
+        return 'specjvm2008'
+
+    def createCommandLineArgs(self, benchmarks, bmSuiteArgs):
+        args = super(SpecJVM2008NativeImageBenchmarkSuite, self).createCommandLineArgs(benchmarks, bmSuiteArgs)
+        if benchmarks is None:
+            mx.abort("Suite can only run a single benchmark per VM instance.")
+        elif len(benchmarks) != 1:
+            mx.abort("Must specify exactly one benchmark.")
+        else:
+            self.benchmark_name = benchmarks[0]
+        return args
+
+    def extra_image_build_argument(self, benchmark, args):
+        return super(SpecJVM2008NativeImageBenchmarkSuite, self).extra_image_build_argument(benchmark, args) + ["-H:-ParseRuntimeOptions", "-Djava.awt.headless=false"]
+
+
+mx_benchmark.add_bm_suite(SpecJVM2008NativeImageBenchmarkSuite())

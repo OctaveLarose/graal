@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2021, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2021, 2022, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * The Universal Permissive License (UPL), Version 1.0
@@ -45,7 +45,6 @@ import static org.junit.runners.Parameterized.Parameter;
 
 import java.util.Arrays;
 
-import org.junit.Assert;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.junit.runners.Parameterized;
@@ -57,29 +56,30 @@ import com.oracle.truffle.api.strings.test.TStringTestBase;
 @RunWith(Parameterized.class)
 public class TStringCodePointAtByteIndexTest extends TStringTestBase {
 
-    @Parameter public TruffleString.CodePointAtByteIndexNode node;
+    @Parameter(value = 0) public TruffleString.CodePointAtByteIndexNode node;
+    @Parameter(value = 1) public TruffleString.ErrorHandling errorHandling;
 
-    @Parameters(name = "{0}")
-    public static Iterable<TruffleString.CodePointAtByteIndexNode> data() {
-        return Arrays.asList(TruffleString.CodePointAtByteIndexNode.create(), TruffleString.CodePointAtByteIndexNode.getUncached());
+    @Parameters(name = "{0} {1}")
+    public static Iterable<Object[]> data() {
+        return crossProductErrorHandling(Arrays.asList(TruffleString.CodePointAtByteIndexNode.create(), TruffleString.CodePointAtByteIndexNode.getUncached()));
     }
 
     @Test
     public void testAll() throws Exception {
         forAllStrings(true, (a, array, codeRange, isValid, encoding, codepoints, byteIndices) -> {
             for (int i = 0; i < codepoints.length; i++) {
-                Assert.assertEquals(codepoints[i], node.execute(a, byteIndices[i], encoding));
+                checkCodepoint(isValid, encoding, codepoints, i, node.execute(a, byteIndices[i], encoding, errorHandling), errorHandling);
             }
         });
     }
 
     @Test
     public void testNull() throws Exception {
-        checkNullSE((s, e) -> node.execute(s, 0, e));
+        checkNullSE((s, e) -> node.execute(s, 0, e, errorHandling));
     }
 
     @Test
     public void testOutOfBounds() throws Exception {
-        checkOutOfBounds(true, false, (a, i, encoding) -> node.execute(a, i, encoding));
+        checkOutOfBounds(true, false, (a, i, encoding) -> node.execute(a, i, encoding, errorHandling));
     }
 }

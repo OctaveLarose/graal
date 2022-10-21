@@ -28,11 +28,11 @@ import java.util.ArrayList;
 
 import org.graalvm.nativeimage.Platform;
 import org.graalvm.nativeimage.Platforms;
-import org.graalvm.nativeimage.hosted.Feature;
 
-import com.oracle.svm.core.annotate.AutomaticFeature;
-import com.oracle.svm.core.annotate.DuplicatedInNativeCode;
-import com.oracle.svm.core.annotate.Uninterruptible;
+import com.oracle.svm.core.Uninterruptible;
+import com.oracle.svm.core.feature.AutomaticallyRegisteredFeature;
+import com.oracle.svm.core.feature.InternalFeature;
+import com.oracle.svm.core.util.DuplicatedInNativeCode;
 import com.oracle.svm.core.util.VMError;
 
 /**
@@ -45,8 +45,9 @@ public class GCCause {
     @DuplicatedInNativeCode public static final GCCause JavaLangSystemGC = new GCCause("java.lang.System.gc()", 0);
     @DuplicatedInNativeCode public static final GCCause UnitTest = new GCCause("UnitTest", 1);
     @DuplicatedInNativeCode public static final GCCause TestGCInDeoptimizer = new GCCause("TestGCInDeoptimizer", 2);
+    @DuplicatedInNativeCode public static final GCCause HintedGC = new GCCause("Hint", 3);
 
-    protected static GCCause[] GCCauses = new GCCause[]{JavaLangSystemGC, UnitTest, TestGCInDeoptimizer};
+    protected static GCCause[] GCCauses = new GCCause[]{JavaLangSystemGC, UnitTest, TestGCInDeoptimizer, HintedGC};
 
     private final int id;
     private final String name;
@@ -92,8 +93,8 @@ public class GCCause {
     }
 }
 
-@AutomaticFeature
-class GCCauseFeature implements Feature {
+@AutomaticallyRegisteredFeature
+class GCCauseFeature implements InternalFeature {
     @Override
     public void beforeCompilation(BeforeCompilationAccess access) {
         GCCause.cacheReverseMapping();

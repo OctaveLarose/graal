@@ -24,6 +24,7 @@
  */
 package com.oracle.graal.pointsto.meta;
 
+import java.lang.reflect.AnnotatedElement;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
@@ -41,6 +42,7 @@ import java.util.function.Consumer;
 
 import org.graalvm.compiler.debug.GraalError;
 import org.graalvm.compiler.graph.Node;
+import org.graalvm.nativeimage.hosted.Feature.DuringAnalysisAccess;
 import org.graalvm.word.WordBase;
 
 import com.oracle.graal.pointsto.BigBang;
@@ -91,6 +93,9 @@ public abstract class AnalysisType extends AnalysisElement implements WrappedJav
 
     private static final AtomicReferenceFieldUpdater<AnalysisType, Object> overrideReachableNotificationsUpdater = AtomicReferenceFieldUpdater
                     .newUpdater(AnalysisType.class, Object.class, "overrideReachableNotifications");
+
+    private static final AtomicReferenceFieldUpdater<AnalysisType, Object> instantiatedNotificationsUpdater = AtomicReferenceFieldUpdater
+                    .newUpdater(AnalysisType.class, Object.class, "typeInstantiatedNotifications");
 
     private static final AtomicIntegerFieldUpdater<AnalysisType> isInHeapUpdater = AtomicIntegerFieldUpdater
                     .newUpdater(AnalysisType.class, "isInHeap");
@@ -193,6 +198,16 @@ public abstract class AnalysisType extends AnalysisElement implements WrappedJav
      * handler is notified only once per method override.
      */
     @SuppressWarnings("unused") private volatile Object overrideReachableNotifications;
+
+    /**
+     * The reachability handler that were registered at the time the type was marked as reachable.
+     * Reachability handler that are added by the user later on are not included in this list, i.e.,
+     * there is no guarantee that such handlers have finished execution before, e.g., reading values
+     * of fields in that type.
+     */
+    List<AnalysisFuture<Void>> scheduledTypeReachableNotifications;
+
+    @SuppressWarnings("unused") private volatile Object typeInstantiatedNotifications;
 
     public AnalysisType(AnalysisUniverse universe, ResolvedJavaType javaType, JavaKind storageKind, AnalysisType objectType, AnalysisType cloneableType) {
         this.universe = universe;
@@ -311,6 +326,7 @@ public abstract class AnalysisType extends AnalysisElement implements WrappedJav
         uniqueConstant = null;
         unsafeAccessedFields = null;
         typeData = null;
+        scheduledTypeReachableNotifications = null;
     }
 
     public int getId() {
@@ -473,6 +489,7 @@ public abstract class AnalysisType extends AnalysisElement implements WrappedJav
 
     protected void onInstantiated(UsageKind usage) {
         universe.onTypeInstantiated(this, usage);
+        notifyInstantiatedCallbacks();
         processMethodOverrides();
     }
 
@@ -527,9 +544,15 @@ public abstract class AnalysisType extends AnalysisElement implements WrappedJav
 
     @Override
     protected void onReachable() {
-        notifyReachabilityCallbacks(universe);
+        List<AnalysisFuture<Void>> futures = new ArrayList<>();
+        notifyReachabilityCallbacks(universe, futures);
         forAllSuperTypes(type -> ConcurrentLightHashSet.forEach(type, subtypeReachableNotificationsUpdater,
-                        (SubtypeReachableNotification n) -> n.notifyCallback(universe, this)));
+                        (SubtypeReachableNotification n) -> futures.add(n.notifyCallback(universe, this))));
+
+        if (futures.size() > 0) {
+            scheduledTypeReachableNotifications = futures;
+        }
+
         universe.notifyReachableType();
         universe.hostVM.checkForbidden(this, UsageKind.Reachable);
         if (isArray()) {
@@ -557,6 +580,33 @@ public abstract class AnalysisType extends AnalysisElement implements WrappedJav
 
     public Set<MethodOverrideReachableNotification> getOverrideReachabilityNotifications(AnalysisMethod method) {
         return ConcurrentLightHashMap.getOrDefault(this, overrideReachableNotificationsUpdater, method, Collections.emptySet());
+    }
+
+    public void registerInstantiatedCallback(Consumer<DuringAnalysisAccess> callback) {
+        if (this.isInstantiated()) {
+            /* If the type is already instantiated just trigger the callback. */
+            callback.accept(universe.getConcurrentAnalysisAccess());
+        } else {
+            ElementNotification notification = new ElementNotification(callback);
+            ConcurrentLightHashSet.addElement(this, instantiatedNotificationsUpdater, notification);
+            if (this.isInstantiated()) {
+                /*
+                 * If the type became instantiated during registration manually trigger the
+                 * callback.
+                 */
+                notifyInstantiatedCallback(notification);
+            }
+        }
+    }
+
+    private void notifyInstantiatedCallback(ElementNotification notification) {
+        notification.notifyCallback(universe, this);
+        ConcurrentLightHashSet.removeElement(this, instantiatedNotificationsUpdater, notification);
+    }
+
+    protected void notifyInstantiatedCallbacks() {
+        ConcurrentLightHashSet.forEach(this, instantiatedNotificationsUpdater, (ElementNotification c) -> c.notifyCallback(universe, this));
+        ConcurrentLightHashSet.removeElementIf(this, instantiatedNotificationsUpdater, ElementNotification::isNotified);
     }
 
     /**
@@ -633,7 +683,7 @@ public abstract class AnalysisType extends AnalysisElement implements WrappedJav
              */
             AnalysisMethod clinit = this.getClassInitializer();
             if (clinit != null) {
-                clinit.notifyReachabilityCallbacks(universe);
+                clinit.notifyReachabilityCallbacks(universe, new ArrayList<>());
             }
         }
     }
@@ -1093,6 +1143,11 @@ public abstract class AnalysisType extends AnalysisElement implements WrappedJav
     }
 
     @Override
+    public AnnotatedElement getAnnotationRoot() {
+        return wrapped;
+    }
+
+    @Override
     public String getSourceFileName() {
         // getSourceFileName is not implemented for primitive types
         return wrapped.isPrimitive() ? null : wrapped.getSourceFileName();
@@ -1126,14 +1181,7 @@ public abstract class AnalysisType extends AnalysisElement implements WrappedJav
 
     @Override
     public AnalysisType getEnclosingType() {
-        ResolvedJavaType wrappedEnclosingType;
-        try {
-            wrappedEnclosingType = wrapped.getEnclosingType();
-        } catch (LinkageError e) {
-            /* Ignore LinkageError thrown by enclosing type resolution. */
-            return null;
-        }
-        return universe.lookup(wrappedEnclosingType);
+        return universe.lookup(wrapped.getEnclosingType());
     }
 
     @Override

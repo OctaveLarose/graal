@@ -432,32 +432,6 @@ public abstract class RootNode extends ExecutableNode {
     }
 
     /**
-     * @throws UnsupportedOperationException if a call target already exists.
-     * @since 19.0
-     * @deprecated in 22.0, call targets are lazily initialized in {@link #getCallTarget()} now.
-     */
-    @Deprecated(since = "22.0")
-    protected final void setCallTarget(RootCallTarget callTarget) {
-        if (this.callTarget != null) {
-            throw new UnsupportedOperationException();
-        }
-        this.callTarget = callTarget;
-    }
-
-    /**
-     * Get compiler options specific to this <code>RootNode</code>.
-     *
-     * @since 0.8 or earlier
-     * @deprecated in 22.1 compiler options had no effect for several releases now. Deprecated for
-     *             removal.
-     */
-    @SuppressWarnings("deprecation")
-    @Deprecated(since = "22.1")
-    public com.oracle.truffle.api.CompilerOptions getCompilerOptions() {
-        return com.oracle.truffle.api.impl.DefaultCompilerOptions.INSTANCE;
-    }
-
-    /**
      * Does this contain AST content that it is possible to instrument. Can be called on any thread
      * and without a language context.
      *
@@ -575,6 +549,46 @@ public abstract class RootNode extends ExecutableNode {
      */
     public static RootNode createConstantNode(Object constant) {
         return new Constant(constant);
+    }
+
+    /**
+     * If this root node has a lexical scope parent, this method returns its frame descriptor.
+     * 
+     * As an example, consider the following pseudocode:
+     * 
+     * <pre>
+     * def m {
+     *   # For the "m" root node:
+     *   # getFrameDescriptor       returns FrameDescriptor(m)
+     *   # getParentFrameDescriptor returns null
+     *   var_method = 0
+     *   a = () -> {
+     *     # For the "a lambda" root node:
+     *     # getFrameDescriptor       returns FrameDescriptor(a)
+     *     # getParentFrameDescriptor returns FrameDescriptor(m)
+     *     var_lambda1 = 1
+     *     b = () -> {
+     *       # For the "b lambda" root node:
+     *       # getFrameDescriptor       returns FrameDescriptor(b)
+     *       # getParentFrameDescriptor returns FrameDescriptor(a)
+     *       var_method + var_lambda1
+     *     }
+     *     b.call
+     *   }
+     *   a.call
+     * }
+     * </pre>
+     *
+     * This info is used by the runtime to optimize compilation order by giving more priority to
+     * lexical parents which are likely to inline the child thus resulting in better performance
+     * sooner rather than waiting for the lexical parent to get hot on its own.
+     *
+     * @return The frame descriptor of the lexical parent scope if it exists. <code>null</code>
+     *         otherwise.
+     * @since 22.3.0
+     */
+    protected FrameDescriptor getParentFrameDescriptor() {
+        return null;
     }
 
     final ReentrantLock getLazyLock() {

@@ -42,7 +42,7 @@ Alternatively, you can set up environment variables through a Windows GUI:
 
 Repeat the same for the `PATH` environment variable.
 
-For Oracle GraalVM Enterprise Edition users, find the installation instructions [here](https://docs.oracle.com/en/graalvm/enterprise/21/docs/getting-started/installation-windows/).
+For Oracle GraalVM Enterprise Edition users, find the installation instructions [here](https://docs.oracle.com/en/graalvm/enterprise/22/docs/getting-started/installation-windows/).
 
 ## Installation Note
 
@@ -50,15 +50,15 @@ To run GraalVM Community Edition based on OpenJDK 8u292 on a Windows platform, t
 
 ## Supported Functionalities
 
-The GraalVM Community distribution for Windows platforms includes OpenJDK with the GraalVM compiler enabled, the [GraalVM Updater](../../reference-manual/graalvm-updater.md) tool to install additional functionalities, the JavaScript runtime, and the developer tools (e.g., Chrome inspector based debugger, Profiler, etc.).
-Currently, the GraalVM environment on Windows can be extended with [Native Image](../../reference-manual/native-image/README.md), [Java on Truffle](../../reference-manual/java-on-truffle/README.md), WebAssembly, and Node.js support.
+The GraalVM Community distribution for Windows platforms includes OpenJDK with the GraalVM compiler enabled, the [GraalVM Updater](../../reference-manual/graalvm-updater.md) tool to install additional functionalities and the developer tools (e.g., Chrome inspector based debugger, Profiler, etc.).
+Currently, the GraalVM environment on Windows can be extended with [Native Image](../../reference-manual/native-image/README.md), [Java on Truffle](../../reference-manual/java-on-truffle/README.md), [LLVM runtime](../../reference-manual/llvm/README.md), WebAssembly, JavaScript and Node.js support.
 
 ## Prerequisites for Using Native Image on Windows
-On Windows, Native Image requires Visual Studio Code and Microsoft Visual C++(MSVC).
+On Windows, Native Image requires Visual Studio and Microsoft Visual C++(MSVC).
 You can use Visual Studio 2017 version 15.9 or later.
 There are two installation options:
-- Install the Visual Studio Code Build Tools with the Windows 10 SDK
-- Install Visual Studio Code with the Windows 10 SDK
+- Install the Visual Studio Build Tools with the Windows 10 SDK
+- Install Visual Studio with the Windows 10 SDK
 
 The last prerequisite is the proper [Developer Command Prompt](https://docs.microsoft.com/en-us/cpp/build/building-on-the-command-line?view=vs-2019#developer_command_prompt_shortcuts) for your version of [Visual Studio](https://visualstudio.microsoft.com/vs/).
 On Windows, the `native-image` tool only works when it is executed from the **x64 Native Tools Command Prompt**.

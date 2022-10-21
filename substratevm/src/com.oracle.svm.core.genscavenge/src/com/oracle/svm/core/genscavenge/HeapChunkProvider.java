@@ -35,8 +35,8 @@ import org.graalvm.word.WordFactory;
 import com.oracle.svm.core.FrameAccess;
 import com.oracle.svm.core.MemoryWalker;
 import com.oracle.svm.core.SubstrateOptions;
-import com.oracle.svm.core.annotate.AlwaysInline;
-import com.oracle.svm.core.annotate.Uninterruptible;
+import com.oracle.svm.core.AlwaysInline;
+import com.oracle.svm.core.Uninterruptible;
 import com.oracle.svm.core.genscavenge.AlignedHeapChunk.AlignedHeader;
 import com.oracle.svm.core.genscavenge.HeapChunk.Header;
 import com.oracle.svm.core.genscavenge.UnalignedHeapChunk.UnalignedHeader;
@@ -148,7 +148,7 @@ final class HeapChunkProvider {
         } else {
             UnsignedWord freeListBytes = getBytesInUnusedChunks();
             UnsignedWord reserveBytes = GCImpl.getPolicy().getMaximumFreeAlignedChunksSize();
-            UnsignedWord maxHeapFree = WordFactory.unsigned(HeapParameters.Options.MaxHeapFree.getValue());
+            UnsignedWord maxHeapFree = WordFactory.unsigned(SerialGCOptions.MaxHeapFree.getValue());
             if (maxHeapFree.aboveThan(0)) {
                 reserveBytes = UnsignedUtils.min(reserveBytes, maxHeapFree);
             }
@@ -315,13 +315,8 @@ final class HeapChunkProvider {
                         .string("/")
                         .signed(bytesInUnusedAlignedChunks.get().unsignedDivide(HeapParameters.getAlignedHeapChunkSize()));
         if (traceHeapChunks) {
-            if (unusedAlignedChunks.get().isNonNull()) {
-                log.newline().string("aligned chunks:").redent(true);
-                for (AlignedHeapChunk.AlignedHeader aChunk = unusedAlignedChunks.get(); aChunk.isNonNull(); aChunk = HeapChunk.getNext(aChunk)) {
-                    log.newline().zhex(aChunk).string(" (").zhex(AlignedHeapChunk.getObjectsStart(aChunk)).string("-").zhex(HeapChunk.getTopPointer(aChunk)).string(")");
-                }
-                log.redent(false);
-            }
+            AlignedHeapChunk.AlignedHeader firstChunk = unusedAlignedChunks.get();
+            HeapChunkLogging.logChunks(log, firstChunk);
         }
         log.redent(false);
         return log;

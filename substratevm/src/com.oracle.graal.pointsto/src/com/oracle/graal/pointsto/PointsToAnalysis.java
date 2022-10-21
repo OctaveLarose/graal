@@ -41,20 +41,14 @@ import java.util.concurrent.ForkJoinPool;
 import java.util.concurrent.ForkJoinWorkerThread;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicLongArray;
-import java.util.function.Function;
 import java.util.stream.StreamSupport;
 
-import org.graalvm.compiler.api.replacements.SnippetReflectionProvider;
 import org.graalvm.compiler.core.common.SuppressFBWarnings;
 import org.graalvm.compiler.core.common.spi.ConstantFieldProvider;
 import org.graalvm.compiler.debug.DebugContext;
-import org.graalvm.compiler.debug.DebugContext.Builder;
 import org.graalvm.compiler.debug.DebugHandlersFactory;
 import org.graalvm.compiler.debug.Indent;
-import org.graalvm.compiler.nodes.spi.Replacements;
 import org.graalvm.compiler.options.OptionValues;
-import org.graalvm.compiler.printer.GraalDebugHandlersFactory;
-import org.graalvm.nativeimage.hosted.Feature;
 
 import com.oracle.graal.pointsto.api.HostVM;
 import com.oracle.graal.pointsto.api.PointstoOptions;
@@ -70,7 +64,6 @@ import com.oracle.graal.pointsto.flow.OffsetStoreTypeFlow.AbstractUnsafeStoreTyp
 import com.oracle.graal.pointsto.flow.TypeFlow;
 import com.oracle.graal.pointsto.infrastructure.WrappedSignature;
 import com.oracle.graal.pointsto.meta.AnalysisField;
-import com.oracle.graal.pointsto.meta.AnalysisMetaAccess;
 import com.oracle.graal.pointsto.meta.AnalysisMethod;
 import com.oracle.graal.pointsto.meta.AnalysisType;
 import com.oracle.graal.pointsto.meta.AnalysisUniverse;
@@ -89,39 +82,16 @@ import com.oracle.svm.util.ClassUtil;
 import com.oracle.svm.util.ImageGeneratorThreadMarker;
 
 import jdk.vm.ci.code.BytecodePosition;
-import jdk.vm.ci.meta.ConstantReflectionProvider;
 import jdk.vm.ci.meta.JavaKind;
 import jdk.vm.ci.meta.JavaType;
 
-public abstract class PointsToAnalysis implements BigBang {
-
-    private final OptionValues options;
-    private final List<DebugHandlersFactory> debugHandlerFactories;
-    private final DebugContext debug;
-    private final HostedProviders providers;
-    private final Replacements replacements;
-
-    private final HeapScanningPolicy heapScanningPolicy;
-
+public abstract class PointsToAnalysis extends AbstractAnalysisEngine {
     /** The type of {@link java.lang.Object}. */
     private final AnalysisType objectType;
     private TypeFlow<?> allSynchronizedTypeFlow;
 
-    protected final AnalysisUniverse universe;
-    private final AnalysisPolicy analysisPolicy;
-    protected final AnalysisMetaAccess metaAccess;
-    protected final HostVM hostVM;
-    private final UnsupportedFeatures unsupportedFeatures;
-
     protected final boolean trackTypeFlowInputs;
     protected final boolean reportAnalysisStatistics;
-    protected final boolean extendedAsserts;
-
-    /**
-     * Processing queue.
-     */
-    private final CompletionExecutor executor;
-    private final Runnable heartbeatCallback;
 
     private ConcurrentMap<AbstractUnsafeLoadTypeFlow, Boolean> unsafeLoads;
     private ConcurrentMap<AbstractUnsafeStoreTypeFlow, Boolean> unsafeStores;
@@ -130,30 +100,14 @@ public abstract class PointsToAnalysis implements BigBang {
     private final CompletionExecutor.Timing timing;
 
     public final Timer typeFlowTimer;
-    public final Timer verifyHeapTimer;
-    public final Timer processFeaturesTimer;
-    public final Timer analysisTimer;
 
     private final boolean strengthenGraalGraphs;
 
     public PointsToAnalysis(OptionValues options, AnalysisUniverse universe, HostedProviders providers, HostVM hostVM, ForkJoinPool executorService, Runnable heartbeatCallback,
                     UnsupportedFeatures unsupportedFeatures, TimerCollection timerCollection, boolean strengthenGraalGraphs) {
-        this.options = options;
-        this.debugHandlerFactories = Collections.singletonList(new GraalDebugHandlersFactory(providers.getSnippetReflection()));
-        this.debug = new Builder(options, debugHandlerFactories).build();
-        this.hostVM = hostVM;
-        String imageName = hostVM.getImageName();
-        this.typeFlowTimer = timerCollection.createTimer(imageName, "(typeflow)", false);
-        this.verifyHeapTimer = timerCollection.get(TimerCollection.Registry.VERIFY_HEAP);
-        this.processFeaturesTimer = timerCollection.get(TimerCollection.Registry.FEATURES);
-        this.analysisTimer = timerCollection.get(TimerCollection.Registry.ANALYSIS);
+        super(options, universe, providers, hostVM, executorService, heartbeatCallback, unsupportedFeatures, timerCollection);
+        this.typeFlowTimer = timerCollection.createTimer("(typeflow)");
 
-        this.universe = universe;
-        this.analysisPolicy = universe.analysisPolicy();
-        this.metaAccess = (AnalysisMetaAccess) providers.getMetaAccess();
-        this.replacements = providers.getReplacements();
-        this.unsupportedFeatures = unsupportedFeatures;
-        this.providers = providers;
         this.strengthenGraalGraphs = strengthenGraalGraphs;
 
         this.objectType = metaAccess.lookupJavaType(Object.class);
@@ -169,26 +123,17 @@ public abstract class PointsToAnalysis implements BigBang {
         if (reportAnalysisStatistics) {
             PointsToStats.init(this);
         }
-        extendedAsserts = PointstoOptions.ExtendedAsserts.getValue(options);
 
         unsafeLoads = new ConcurrentHashMap<>();
         unsafeStores = new ConcurrentHashMap<>();
 
         timing = PointstoOptions.ProfileAnalysisOperations.getValue(options) ? new AnalysisTiming() : null;
-        executor = new CompletionExecutor(this, executorService, heartbeatCallback);
         executor.init(timing);
-        this.heartbeatCallback = heartbeatCallback;
-
-        heapScanningPolicy = PointstoOptions.ExhaustiveHeapScan.getValue(options)
-                        ? HeapScanningPolicy.scanAll()
-                        : HeapScanningPolicy.skipTypes(skippedHeapTypes());
     }
 
     @Override
-    public void printTimers() {
-        typeFlowTimer.print();
-        verifyHeapTimer.print();
-        processFeaturesTimer.print();
+    protected CompletionExecutor.Timing getTiming() {
+        return timing;
     }
 
     @Override
@@ -206,42 +151,12 @@ public abstract class PointsToAnalysis implements BigBang {
         return strengthenGraalGraphs;
     }
 
-    @Override
-    public AnalysisType[] skippedHeapTypes() {
-        return new AnalysisType[]{metaAccess.lookupJavaType(String.class)};
-    }
-
-    @Override
-    public Runnable getHeartbeatCallback() {
-        return heartbeatCallback;
-    }
-
     public boolean trackTypeFlowInputs() {
         return trackTypeFlowInputs;
     }
 
     public boolean reportAnalysisStatistics() {
         return reportAnalysisStatistics;
-    }
-
-    @Override
-    public boolean extendedAsserts() {
-        return extendedAsserts;
-    }
-
-    @Override
-    public OptionValues getOptions() {
-        return options;
-    }
-
-    @Override
-    public List<DebugHandlersFactory> getDebugHandlerFactories() {
-        return debugHandlerFactories;
-    }
-
-    @Override
-    public DebugContext getDebug() {
-        return debug;
     }
 
     public MethodTypeFlowBuilder createMethodTypeFlowBuilder(PointsToAnalysis bb, PointsToAnalysisMethod method) {
@@ -314,48 +229,12 @@ public abstract class PointsToAnalysis implements BigBang {
 
     @Override
     public void cleanupAfterAnalysis() {
+        super.cleanupAfterAnalysis();
         allSynchronizedTypeFlow = null;
         unsafeLoads = null;
         unsafeStores = null;
 
         ConstantObjectsProfiler.constantTypes.clear();
-
-        universe.getTypes().forEach(AnalysisType::cleanupAfterAnalysis);
-        universe.getFields().forEach(AnalysisField::cleanupAfterAnalysis);
-        universe.getMethods().forEach(AnalysisMethod::cleanupAfterAnalysis);
-
-        universe.getHeapScanner().cleanupAfterAnalysis();
-        universe.getHeapVerifier().cleanupAfterAnalysis();
-    }
-
-    @Override
-    public AnalysisPolicy analysisPolicy() {
-        return analysisPolicy;
-    }
-
-    @Override
-    public AnalysisUniverse getUniverse() {
-        return universe;
-    }
-
-    @Override
-    public HostedProviders getProviders() {
-        return providers;
-    }
-
-    @Override
-    public AnalysisMetaAccess getMetaAccess() {
-        return metaAccess;
-    }
-
-    @Override
-    public Replacements getReplacements() {
-        return replacements;
-    }
-
-    @Override
-    public UnsupportedFeatures getUnsupportedFeatures() {
-        return unsupportedFeatures;
     }
 
     public AnalysisType lookup(JavaType type) {
@@ -412,10 +291,6 @@ public abstract class PointsToAnalysis implements BigBang {
         return allSynchronizedTypeFlow.getState().types(this);
     }
 
-    public boolean executorIsStarted() {
-        return executor.isStarted();
-    }
-
     @Override
     public AnalysisMethod addRootMethod(Executable method, boolean invokeSpecial) {
         return addRootMethod(metaAccess.lookupJavaMethod(method), invokeSpecial);
@@ -465,7 +340,7 @@ public abstract class PointsToAnalysis implements BigBang {
                  * virtual invoke type flow. Since the virtual invoke observes the receiver flow
                  * state it will get notified for any future reachable subtypes and will resolve the
                  * method in each subtype.
-                 * 
+                 *
                  * In both cases the context-insensitive invoke parameters are initialized with the
                  * corresponding declared type state. When a callee is resolved the method is parsed
                  * and the actual parameter type state is propagated to the formal parameters. Then
@@ -483,7 +358,7 @@ public abstract class PointsToAnalysis implements BigBang {
                      * Initialize the type flow of the invoke's actual parameters with the
                      * corresponding parameter declared type. Thus, when the invoke links callees it
                      * will propagate the parameter types too.
-                     * 
+                     *
                      * The parameter iteration skips the primitive parameters, as these are not
                      * modeled. The type flow of the receiver is set to the receiver type already
                      * when the invoke is created.
@@ -585,16 +460,6 @@ public abstract class PointsToAnalysis implements BigBang {
         }
     }
 
-    @Override
-    public final SnippetReflectionProvider getSnippetReflectionProvider() {
-        return providers.getSnippetReflection();
-    }
-
-    @Override
-    public final ConstantReflectionProvider getConstantReflectionProvider() {
-        return providers.getConstantReflection();
-    }
-
     public ConstantFieldProvider getConstantFieldProvider() {
         return providers.getConstantFieldProvider();
     }
@@ -633,11 +498,6 @@ public abstract class PointsToAnalysis implements BigBang {
                 return operation;
             }
         });
-    }
-
-    @Override
-    public void postTask(final DebugContextRunnable task) {
-        executor.execute(task);
     }
 
     public void postTask(final Runnable task) {
@@ -685,94 +545,6 @@ public abstract class PointsToAnalysis implements BigBang {
         /* Initialize for the next iteration. */
         executor.init(timing);
         return didSomeWork;
-    }
-
-    @Override
-    public HeapScanningPolicy scanningPolicy() {
-        return heapScanningPolicy;
-    }
-
-    @Override
-    public HostVM getHostVM() {
-        return hostVM;
-    }
-
-    /**
-     * Iterate until analysis reaches a fixpoint.
-     *
-     * @param debugContext debug context
-     * @param analysisEndCondition hook for actions to be taken during analysis. It also dictates
-     *            when the analysis should end, i.e., it returns true if no more iterations are
-     *            required.
-     *
-     *            When the analysis is used for Native Image generation the actions could for
-     *            example be specified via
-     *            {@link org.graalvm.nativeimage.hosted.Feature#duringAnalysis(Feature.DuringAnalysisAccess)}.
-     *            The ending condition could be provided by
-     *            {@link org.graalvm.nativeimage.hosted.Feature.DuringAnalysisAccess#requireAnalysisIteration()}.
-     *
-     * @throws AnalysisError if the analysis fails
-     */
-    @SuppressWarnings("try")
-    @Override
-    public void runAnalysis(DebugContext debugContext, Function<AnalysisUniverse, Boolean> analysisEndCondition) throws InterruptedException {
-        int numIterations = 0;
-        while (true) {
-            try (Indent indent2 = debugContext.logAndIndent("new analysis iteration")) {
-                /*
-                 * Do the analysis (which itself is done in a similar iterative process)
-                 */
-                boolean analysisChanged = finish();
-
-                numIterations++;
-                if (numIterations > 1000) {
-                    /*
-                     * Usually there are < 10 iterations. If we have so many iterations, we probably
-                     * have an endless loop (but at least we have a performance problem because we
-                     * re-start the analysis so often).
-                     */
-                    throw AnalysisError.shouldNotReachHere(String.format("Static analysis did not reach a fix point after %d iterations because a Feature keeps requesting new analysis iterations. " +
-                                    "The analysis itself %s find a change in type states in the last iteration.",
-                                    numIterations, analysisChanged ? "DID" : "DID NOT"));
-                }
-                /*
-                 * Allow features to change the universe.
-                 */
-                int numTypes = universe.getTypes().size();
-                int numMethods = universe.getMethods().size();
-                int numFields = universe.getFields().size();
-                if (analysisEndCondition.apply(universe)) {
-                    if (numTypes != universe.getTypes().size() || numMethods != universe.getMethods().size() || numFields != universe.getFields().size()) {
-                        throw AnalysisError.shouldNotReachHere(
-                                        "When a feature makes more types, methods, or fields reachable, it must require another analysis iteration via DuringAnalysisAccess.requireAnalysisIteration()");
-                    }
-                    /*
-                     * Manual rescanning doesn't explicitly require analysis iterations, but it can
-                     * insert some pending operations.
-                     */
-                    boolean pendingOperations = executor.getPostedOperations() > 0;
-                    if (pendingOperations) {
-                        System.out.println("Found pending operations, continuing analysis.");
-                        continue;
-                    }
-                    /* Outer analysis loop is done. Check if heap verification modifies analysis. */
-                    if (!analysisModified()) {
-                        return;
-                    }
-                }
-            }
-        }
-    }
-
-    @SuppressWarnings("try")
-    private boolean analysisModified() throws InterruptedException {
-        boolean analysisModified;
-        try (StopTimer ignored = verifyHeapTimer.start()) {
-            analysisModified = universe.getHeapVerifier().requireAnalysisIteration(executor);
-        }
-        /* Initialize for the next iteration. */
-        executor.init(timing);
-        return analysisModified;
     }
 
     @SuppressFBWarnings(value = "NP_NONNULL_PARAM_VIOLATION", justification = "ForkJoinPool does support null for the exception handler.")

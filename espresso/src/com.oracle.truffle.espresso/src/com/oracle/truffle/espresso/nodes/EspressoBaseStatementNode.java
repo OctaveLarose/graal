@@ -22,11 +22,11 @@
  */
 package com.oracle.truffle.espresso.nodes;
 
-import com.oracle.truffle.api.CompilerDirectives;
+import com.oracle.truffle.api.CompilerDirectives.TruffleBoundary;
 import com.oracle.truffle.api.frame.Frame;
+import com.oracle.truffle.api.frame.MaterializedFrame;
 import com.oracle.truffle.api.frame.VirtualFrame;
 import com.oracle.truffle.api.instrumentation.GenerateWrapper;
-import com.oracle.truffle.api.instrumentation.InstrumentableNode;
 import com.oracle.truffle.api.instrumentation.ProbeNode;
 import com.oracle.truffle.api.instrumentation.StandardTags;
 import com.oracle.truffle.api.instrumentation.Tag;
@@ -37,7 +37,7 @@ import com.oracle.truffle.api.nodes.Node;
 
 @GenerateWrapper
 @ExportLibrary(NodeLibrary.class)
-public abstract class EspressoBaseStatementNode extends EspressoNode implements InstrumentableNode {
+public abstract class EspressoBaseStatementNode extends EspressoInstrumentableNode {
 
     public void execute(@SuppressWarnings("unused") VirtualFrame frame) {
         // only here to satisfy wrapper generation
@@ -45,11 +45,6 @@ public abstract class EspressoBaseStatementNode extends EspressoNode implements 
 
     public boolean hasTag(Class<? extends Tag> tag) {
         return tag == StandardTags.StatementTag.class;
-    }
-
-    @Override
-    public boolean isInstrumentable() {
-        return true;
     }
 
     @Override
@@ -72,9 +67,12 @@ public abstract class EspressoBaseStatementNode extends EspressoNode implements 
     }
 
     @ExportMessage
-    @CompilerDirectives.TruffleBoundary
-    @SuppressWarnings("static-method")
-    public final Object getScope(Frame frame, @SuppressWarnings("unused") boolean nodeEnter) {
+    public final Object getScope(Frame frame, boolean nodeEnter) {
+        return getScopeSlowPath(frame != null ? frame.materialize() : null, nodeEnter);
+    }
+
+    @TruffleBoundary
+    private Object getScopeSlowPath(MaterializedFrame frame, boolean nodeEnter) {
         return getBytecodeNode().getScope(frame, nodeEnter);
     }
 }

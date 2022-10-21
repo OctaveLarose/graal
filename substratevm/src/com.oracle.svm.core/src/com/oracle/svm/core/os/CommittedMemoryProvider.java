@@ -34,7 +34,7 @@ import org.graalvm.word.PointerBase;
 import org.graalvm.word.UnsignedWord;
 import org.graalvm.word.WordFactory;
 
-import com.oracle.svm.core.annotate.Uninterruptible;
+import com.oracle.svm.core.Uninterruptible;
 import com.oracle.svm.core.c.function.CEntryPointCreateIsolateParameters;
 import com.oracle.svm.core.heap.Heap;
 
@@ -139,7 +139,7 @@ public interface CommittedMemoryProvider {
      * @param nbytes The size in bytes of the address range to be protected, which will be rounded
      *            up to a multiple of the {@linkplain #getGranularity() granularity}.
      * @param access The modes in which the memory is permitted to be accessed, see {@link Access}.
-     * @return true on success, or false otherwise.
+     * @return 0 when successful, or a non-zero implementation-specific error code.
      */
-    boolean protect(PointerBase start, UnsignedWord nbytes, EnumSet<Access> access);
+    int protect(PointerBase start, UnsignedWord nbytes, EnumSet<Access> access);
 }

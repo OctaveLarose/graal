@@ -41,6 +41,8 @@ import static org.graalvm.compiler.lir.LIRValueUtil.isConstantValue;
 import static org.graalvm.compiler.lir.LIRValueUtil.isIntConstant;
 import static org.graalvm.compiler.lir.LIRValueUtil.isJavaConstant;
 
+import java.util.EnumSet;
+
 import org.graalvm.compiler.asm.amd64.AMD64Assembler.AMD64BinaryArithmetic;
 import org.graalvm.compiler.asm.amd64.AMD64Assembler.AMD64MIOp;
 import org.graalvm.compiler.asm.amd64.AMD64Assembler.AMD64RMOp;
@@ -52,6 +54,7 @@ import org.graalvm.compiler.asm.amd64.AVXKind;
 import org.graalvm.compiler.asm.amd64.AVXKind.AVXSize;
 import org.graalvm.compiler.core.common.LIRKind;
 import org.graalvm.compiler.core.common.NumUtil;
+import org.graalvm.compiler.core.common.Stride;
 import org.graalvm.compiler.core.common.calc.Condition;
 import org.graalvm.compiler.core.common.memory.MemoryOrderMode;
 import org.graalvm.compiler.core.common.spi.ForeignCallLinkage;
@@ -65,6 +68,8 @@ import org.graalvm.compiler.lir.LabelRef;
 import org.graalvm.compiler.lir.StandardOp.JumpOp;
 import org.graalvm.compiler.lir.SwitchStrategy;
 import org.graalvm.compiler.lir.Variable;
+import org.graalvm.compiler.lir.amd64.AMD64AESDecryptOp;
+import org.graalvm.compiler.lir.amd64.AMD64AESEncryptOp;
 import org.graalvm.compiler.lir.amd64.AMD64AddressValue;
 import org.graalvm.compiler.lir.amd64.AMD64ArithmeticLIRGeneratorTool;
 import org.graalvm.compiler.lir.amd64.AMD64ArrayCompareToOp;
@@ -72,6 +77,7 @@ import org.graalvm.compiler.lir.amd64.AMD64ArrayCopyWithConversionsOp;
 import org.graalvm.compiler.lir.amd64.AMD64ArrayEqualsOp;
 import org.graalvm.compiler.lir.amd64.AMD64ArrayIndexOfOp;
 import org.graalvm.compiler.lir.amd64.AMD64ArrayRegionCompareToOp;
+import org.graalvm.compiler.lir.amd64.AMD64BigIntegerMultiplyToLenOp;
 import org.graalvm.compiler.lir.amd64.AMD64Binary;
 import org.graalvm.compiler.lir.amd64.AMD64BinaryConsumer;
 import org.graalvm.compiler.lir.amd64.AMD64ByteSwapOp;
@@ -95,7 +101,9 @@ import org.graalvm.compiler.lir.amd64.AMD64ControlFlow.StrategySwitchOp;
 import org.graalvm.compiler.lir.amd64.AMD64ControlFlow.TestBranchOp;
 import org.graalvm.compiler.lir.amd64.AMD64ControlFlow.TestByteBranchOp;
 import org.graalvm.compiler.lir.amd64.AMD64ControlFlow.TestConstBranchOp;
+import org.graalvm.compiler.lir.amd64.AMD64CounterModeAESCryptOp;
 import org.graalvm.compiler.lir.amd64.AMD64EncodeArrayOp;
+import org.graalvm.compiler.lir.amd64.AMD64GHASHProcessBlocksOp;
 import org.graalvm.compiler.lir.amd64.AMD64HasNegativesOp;
 import org.graalvm.compiler.lir.amd64.AMD64LFenceOp;
 import org.graalvm.compiler.lir.amd64.AMD64Move;
@@ -105,6 +113,7 @@ import org.graalvm.compiler.lir.amd64.AMD64Move.StackLeaOp;
 import org.graalvm.compiler.lir.amd64.AMD64PauseOp;
 import org.graalvm.compiler.lir.amd64.AMD64StringLatin1InflateOp;
 import org.graalvm.compiler.lir.amd64.AMD64StringUTF16CompressOp;
+import org.graalvm.compiler.lir.amd64.AMD64VectorizedMismatchOp;
 import org.graalvm.compiler.lir.amd64.AMD64ZapRegistersOp;
 import org.graalvm.compiler.lir.amd64.AMD64ZapStackOp;
 import org.graalvm.compiler.lir.amd64.AMD64ZeroMemoryOp;
@@ -282,18 +291,18 @@ public abstract class AMD64LIRGenerator extends LIRGenerator {
     }
 
     @Override
-    public Value emitAtomicReadAndAdd(Value address, ValueKind<?> kind, Value delta) {
-        Variable result = newVariable(kind);
+    public Value emitAtomicReadAndAdd(LIRKind accessKind, Value address, Value delta) {
+        Variable result = newVariable(toRegisterKind(accessKind));
         AMD64AddressValue addressValue = asAddressValue(address);
-        append(new AMD64Move.AtomicReadAndAddOp((AMD64Kind) kind.getPlatformKind(), result, addressValue, asAllocatable(delta)));
+        append(new AMD64Move.AtomicReadAndAddOp((AMD64Kind) accessKind.getPlatformKind(), result, addressValue, asAllocatable(delta)));
         return result;
     }
 
     @Override
-    public Value emitAtomicReadAndWrite(Value address, ValueKind<?> kind, Value newValue) {
-        Variable result = newVariable(kind);
+    public Value emitAtomicReadAndWrite(LIRKind accessKind, Value address, Value newValue) {
+        Variable result = newVariable(toRegisterKind(accessKind));
         AMD64AddressValue addressValue = asAddressValue(address);
-        append(new AMD64Move.AtomicReadAndWriteOp((AMD64Kind) kind.getPlatformKind(), result, addressValue, asAllocatable(newValue)));
+        append(new AMD64Move.AtomicReadAndWriteOp((AMD64Kind) accessKind.getPlatformKind(), result, addressValue, asAllocatable(newValue)));
         return result;
     }
 
@@ -575,124 +584,243 @@ public abstract class AMD64LIRGenerator extends LIRGenerator {
         return result;
     }
 
+    @SuppressWarnings("unchecked")
     @Override
-    public Variable emitArrayCompareTo(JavaKind kind1, JavaKind kind2, int array1BaseOffset, int array2BaseOffset, Value array1, Value array2, Value length1, Value length2) {
+    public Variable emitArrayCompareTo(Stride strideA, Stride strideB, EnumSet<?> runtimeCheckedCPUFeatures,
+                    Value arrayA, Value lengthA,
+                    Value arrayB, Value lengthB) {
         LIRKind resultKind = LIRKind.value(AMD64Kind.DWORD);
         RegisterValue raxRes = AMD64.rax.asValue(resultKind);
-        RegisterValue cnt1 = AMD64.rcx.asValue(length1.getValueKind());
-        RegisterValue cnt2 = AMD64.rdx.asValue(length2.getValueKind());
-        emitMove(cnt1, length1);
-        emitMove(cnt2, length2);
-        append(new AMD64ArrayCompareToOp(this, getAVX3Threshold(), kind1, kind2, array1BaseOffset, array2BaseOffset, raxRes, array1, array2, cnt1, cnt2));
+        RegisterValue cntA = AMD64.rcx.asValue(lengthA.getValueKind());
+        RegisterValue cntB = AMD64.rdx.asValue(lengthB.getValueKind());
+        emitMove(cntA, lengthA);
+        emitMove(cntB, lengthB);
+        append(new AMD64ArrayCompareToOp(this, getAVX3Threshold(), strideA, strideB, (EnumSet<CPUFeature>) runtimeCheckedCPUFeatures,
+                        raxRes, arrayA, cntA, arrayB, cntB));
         Variable result = newVariable(resultKind);
         emitMove(result, raxRes);
         return result;
     }
 
+    @SuppressWarnings("unchecked")
     @Override
-    public Variable emitArrayRegionCompareTo(Value arrayA, Value offsetA, Value arrayB, Value offsetB, Value length, Value stride) {
+    public Variable emitArrayRegionCompareTo(EnumSet<?> runtimeCheckedCPUFeatures, Value arrayA, Value offsetA, Value arrayB, Value offsetB, Value length, Value dynamicStrides) {
         Variable result = newVariable(LIRKind.value(AMD64Kind.DWORD));
-        append(AMD64ArrayRegionCompareToOp.movParamsAndCreate(this, null, null, result, arrayA, offsetA, arrayB, offsetB, length, stride, ZERO_EXTEND));
-        return result;
-    }
-
-    @Override
-    public Variable emitArrayRegionCompareTo(JavaKind strideA, JavaKind strideB, Value arrayA, Value offsetA, Value arrayB, Value offsetB, Value length) {
-        Variable result = newVariable(LIRKind.value(AMD64Kind.DWORD));
-        append(AMD64ArrayRegionCompareToOp.movParamsAndCreate(this, strideA, strideB, result, arrayA, offsetA, arrayB, offsetB, length, null, ZERO_EXTEND));
-        return result;
-    }
-
-    @Override
-    public Variable emitArrayEquals(JavaKind kind, int array1BaseOffset, int array2BaseOffset, Value array1, Value array2, Value length) {
-        Variable result = newVariable(LIRKind.value(AMD64Kind.DWORD));
-        append(AMD64ArrayEqualsOp.movParamsAndCreate(this, kind, kind, kind, array1BaseOffset, array2BaseOffset, 0, result, array1, null, array2, null, null, length, ZERO_EXTEND));
-        return result;
-    }
-
-    @Override
-    public Variable emitArrayEquals(int baseOffsetA, int baseOffsetB, Value arrayA, Value offsetA, Value arrayB, Value offsetB, Value length, Value stride) {
-        Variable result = newVariable(LIRKind.value(AMD64Kind.DWORD));
-        append(AMD64ArrayEqualsOp.movParamsAndCreate(this, baseOffsetA, baseOffsetB, 0, result, arrayA, offsetA, arrayB, offsetB, null, length, stride, ZERO_EXTEND));
-        return result;
-    }
-
-    @Override
-    public Variable emitArrayEquals(JavaKind kind, int array1BaseOffset, int array2BaseOffset, Value array1, Value offset1, Value array2, Value offset2, Value length) {
-        Variable result = newVariable(LIRKind.value(AMD64Kind.DWORD));
-        append(AMD64ArrayEqualsOp.movParamsAndCreate(this, kind, kind, kind, array1BaseOffset, array2BaseOffset, 0, result, array1, offset1, array2, offset2, null, length, ZERO_EXTEND));
-        return result;
-    }
-
-    @Override
-    public Variable emitArrayEquals(JavaKind kind1, JavaKind kind2, int array1BaseOffset, int array2BaseOffset, Value array1, Value offset1, Value array2, Value offset2, Value length) {
-        Variable result = newVariable(LIRKind.value(AMD64Kind.DWORD));
-        append(AMD64ArrayEqualsOp.movParamsAndCreate(this, kind1, kind2, kind2, array1BaseOffset, array2BaseOffset, 0, result, array1, offset1, array2, offset2, null, length, ZERO_EXTEND));
-        return result;
-    }
-
-    @Override
-    public Variable emitArrayEquals(int baseOffsetA, int baseOffsetB, int baseOffsetMask,
-                    Value arrayA, Value offsetA, Value arrayB, Value offsetB, Value mask, Value length, Value stride) {
-        Variable result = newVariable(LIRKind.value(AMD64Kind.DWORD));
-        append(AMD64ArrayEqualsOp.movParamsAndCreate(this, baseOffsetA, baseOffsetB, baseOffsetMask, result, arrayA, offsetA, arrayB, offsetB, mask, length, stride, ZERO_EXTEND));
-        return result;
-    }
-
-    @Override
-    public Variable emitArrayEquals(JavaKind kind1, JavaKind kind2, JavaKind kindMask, int array1BaseOffset, int array2BaseOffset, int maskBaseOffset,
-                    Value array1, Value offset1, Value array2, Value offset2, Value mask, Value length) {
-        Variable result = newVariable(LIRKind.value(AMD64Kind.DWORD));
-        append(AMD64ArrayEqualsOp.movParamsAndCreate(this, kind1, kind2, kindMask, array1BaseOffset, array2BaseOffset, maskBaseOffset, result, array1, offset1, array2, offset2, mask, length,
+        append(AMD64ArrayRegionCompareToOp.movParamsAndCreate(this, null, null, (EnumSet<CPUFeature>) runtimeCheckedCPUFeatures,
+                        result, arrayA, offsetA, arrayB, offsetB, length, dynamicStrides,
                         ZERO_EXTEND));
         return result;
     }
 
+    @SuppressWarnings("unchecked")
     @Override
-    public void emitArrayCopyWithConversion(JavaKind strideSrc, JavaKind strideDst, Value arraySrc, Value offsetSrc, Value arrayDst, Value offsetDst, Value length) {
-        append(AMD64ArrayCopyWithConversionsOp.movParamsAndCreate(this, strideSrc, strideDst, arraySrc, offsetSrc, arrayDst, offsetDst, length, ZERO_EXTEND));
+    public Variable emitArrayRegionCompareTo(Stride strideA, Stride strideB, EnumSet<?> runtimeCheckedCPUFeatures, Value arrayA, Value offsetA, Value arrayB, Value offsetB, Value length) {
+        Variable result = newVariable(LIRKind.value(AMD64Kind.DWORD));
+        append(AMD64ArrayRegionCompareToOp.movParamsAndCreate(this, strideA, strideB, (EnumSet<CPUFeature>) runtimeCheckedCPUFeatures,
+                        result, arrayA, offsetA, arrayB, offsetB, length, null,
+                        ZERO_EXTEND));
+        return result;
     }
 
+    @SuppressWarnings("unchecked")
     @Override
-    public void emitArrayCopyWithConversion(Value arraySrc, Value offsetSrc, Value arrayDst, Value offsetDst, Value length, Value stride) {
-        append(AMD64ArrayCopyWithConversionsOp.movParamsAndCreate(this, arraySrc, offsetSrc, arrayDst, offsetDst, length, stride, ZERO_EXTEND));
+    public Variable emitVectorizedMismatch(EnumSet<?> runtimeCheckedCPUFeatures, Value arrayA, Value arrayB, Value length, Value stride) {
+        Variable result = newVariable(LIRKind.value(AMD64Kind.DWORD));
+        append(AMD64VectorizedMismatchOp.movParamsAndCreate(this, (EnumSet<CPUFeature>) runtimeCheckedCPUFeatures, result, arrayA, arrayB, length, stride));
+        return result;
     }
 
+    @SuppressWarnings("unchecked")
     @Override
-    public Variable emitCalcStringAttributes(Object opObj, Value array, Value offset, Value length, boolean isValid) {
+    public Variable emitArrayEquals(JavaKind commonElementKind,
+                    EnumSet<?> runtimeCheckedCPUFeatures,
+                    Value arrayA, Value offsetA,
+                    Value arrayB, Value offsetB,
+                    Value length) {
+        Variable result = newVariable(LIRKind.value(AMD64Kind.DWORD));
+        Stride stride = Stride.fromJavaKind(commonElementKind);
+        append(AMD64ArrayEqualsOp.movParamsAndCreate(this, commonElementKind, stride, stride, stride,
+                        (EnumSet<CPUFeature>) runtimeCheckedCPUFeatures,
+                        result, arrayA, offsetA, arrayB, offsetB, null, length, null,
+                        ZERO_EXTEND));
+        return result;
+    }
+
+    @SuppressWarnings("unchecked")
+    @Override
+    public Variable emitArrayEquals(
+                    Stride strideA, Stride strideB,
+                    EnumSet<?> runtimeCheckedCPUFeatures,
+                    Value arrayA, Value offsetA,
+                    Value arrayB, Value offsetB,
+                    Value length) {
+        Variable result = newVariable(LIRKind.value(AMD64Kind.DWORD));
+        append(AMD64ArrayEqualsOp.movParamsAndCreate(this, strideA, strideB, strideB,
+                        (EnumSet<CPUFeature>) runtimeCheckedCPUFeatures,
+                        result, arrayA, offsetA, arrayB, offsetB, null, length,
+                        ZERO_EXTEND));
+        return result;
+    }
+
+    @SuppressWarnings("unchecked")
+    @Override
+    public Variable emitArrayEqualsDynamicStrides(
+                    EnumSet<?> runtimeCheckedCPUFeatures,
+                    Value arrayA, Value offsetA,
+                    Value arrayB, Value offsetB,
+                    Value length,
+                    Value dynamicStrides) {
+        Variable result = newVariable(LIRKind.value(AMD64Kind.DWORD));
+        append(AMD64ArrayEqualsOp.movParamsAndCreate(this, (EnumSet<CPUFeature>) runtimeCheckedCPUFeatures,
+                        result, arrayA, offsetA, arrayB, offsetB, null, length, dynamicStrides,
+                        ZERO_EXTEND));
+        return result;
+    }
+
+    @SuppressWarnings("unchecked")
+    @Override
+    public Variable emitArrayEqualsWithMask(
+                    Stride strideA,
+                    Stride strideB,
+                    Stride strideMask,
+                    EnumSet<?> runtimeCheckedCPUFeatures,
+                    Value arrayA, Value offsetA,
+                    Value arrayB, Value offsetB,
+                    Value mask,
+                    Value length) {
+        Variable result = newVariable(LIRKind.value(AMD64Kind.DWORD));
+        append(AMD64ArrayEqualsOp.movParamsAndCreate(this, strideA, strideB, strideMask,
+                        (EnumSet<CPUFeature>) runtimeCheckedCPUFeatures,
+                        result, arrayA, offsetA, arrayB, offsetB, mask, length,
+                        ZERO_EXTEND));
+        return result;
+    }
+
+    @SuppressWarnings("unchecked")
+    @Override
+    public Variable emitArrayEqualsWithMaskDynamicStrides(
+                    EnumSet<?> runtimeCheckedCPUFeatures,
+                    Value arrayA, Value offsetA,
+                    Value arrayB, Value offsetB,
+                    Value mask,
+                    Value length,
+                    Value dynamicStrides) {
+        Variable result = newVariable(LIRKind.value(AMD64Kind.DWORD));
+        append(AMD64ArrayEqualsOp.movParamsAndCreate(this,
+                        (EnumSet<CPUFeature>) runtimeCheckedCPUFeatures,
+                        result, arrayA, offsetA, arrayB, offsetB, mask, length, dynamicStrides,
+                        ZERO_EXTEND));
+        return result;
+    }
+
+    @SuppressWarnings("unchecked")
+    @Override
+    public void emitArrayCopyWithConversion(Stride strideSrc, Stride strideDst, EnumSet<?> runtimeCheckedCPUFeatures,
+                    Value arraySrc, Value offsetSrc, Value arrayDst, Value offsetDst, Value length) {
+        append(AMD64ArrayCopyWithConversionsOp.movParamsAndCreate(this, strideSrc, strideDst, (EnumSet<CPUFeature>) runtimeCheckedCPUFeatures,
+                        arraySrc, offsetSrc, arrayDst, offsetDst, length,
+                        ZERO_EXTEND));
+    }
+
+    @SuppressWarnings("unchecked")
+    @Override
+    public void emitArrayCopyWithConversion(EnumSet<?> runtimeCheckedCPUFeatures,
+                    Value arraySrc, Value offsetSrc, Value arrayDst, Value offsetDst, Value length, Value dynamicStrides) {
+        append(AMD64ArrayCopyWithConversionsOp.movParamsAndCreate(this, (EnumSet<CPUFeature>) runtimeCheckedCPUFeatures, arraySrc, offsetSrc, arrayDst, offsetDst, length, dynamicStrides,
+                        ZERO_EXTEND));
+    }
+
+    @SuppressWarnings("unchecked")
+    @Override
+    public Variable emitCalcStringAttributes(Object opObj, EnumSet<?> runtimeCheckedCPUFeatures,
+                    Value array, Value offset, Value length, boolean isValid) {
         AMD64CalcStringAttributesOp.Op op = (AMD64CalcStringAttributesOp.Op) opObj;
         Variable result = newVariable(LIRKind.value(op == AMD64CalcStringAttributesOp.Op.UTF_8 || op == AMD64CalcStringAttributesOp.Op.UTF_16 ? AMD64Kind.QWORD : AMD64Kind.DWORD));
-        append(AMD64CalcStringAttributesOp.movParamsAndCreate(this, op, array, offset, length, result, isValid));
+        append(AMD64CalcStringAttributesOp.movParamsAndCreate(this, op, (EnumSet<CPUFeature>) runtimeCheckedCPUFeatures, array, offset, length, result, isValid));
+        return result;
+    }
+
+    @SuppressWarnings("unchecked")
+    @Override
+    public Variable emitEncodeArray(EnumSet<?> runtimeCheckedCPUFeatures, Value src, Value dst, Value length, CharsetName charset) {
+        Variable result = newVariable(LIRKind.value(AMD64Kind.DWORD));
+        append(new AMD64EncodeArrayOp(this, (EnumSet<CPUFeature>) runtimeCheckedCPUFeatures, result, asAllocatable(src), asAllocatable(dst), asAllocatable(length), charset));
+        return result;
+    }
+
+    @SuppressWarnings("unchecked")
+    @Override
+    public Variable emitHasNegatives(EnumSet<?> runtimeCheckedCPUFeatures, Value array, Value length) {
+        Variable result = newVariable(LIRKind.value(AMD64Kind.DWORD));
+        append(new AMD64HasNegativesOp(this, (EnumSet<CPUFeature>) runtimeCheckedCPUFeatures, result, asAllocatable(array), asAllocatable(length)));
         return result;
     }
 
     @Override
-    public Variable emitEncodeArray(Value src, Value dst, Value length, CharsetName charset) {
-        Variable result = newVariable(LIRKind.value(AMD64Kind.DWORD));
-        append(new AMD64EncodeArrayOp(this, result, asAllocatable(src), asAllocatable(dst), asAllocatable(length), charset));
+    public void emitAESEncrypt(Value from, Value to, Value key) {
+        append(new AMD64AESEncryptOp(this, asAllocatable(from), asAllocatable(to), asAllocatable(key), getArrayLengthOffset() - getArrayBaseOffset(JavaKind.Int)));
+    }
+
+    @Override
+    public void emitAESDecrypt(Value from, Value to, Value key) {
+        append(new AMD64AESDecryptOp(this, asAllocatable(from), asAllocatable(to), asAllocatable(key), getArrayLengthOffset() - getArrayBaseOffset(JavaKind.Int)));
+    }
+
+    @Override
+    public Variable emitCTRAESCrypt(Value inAddr, Value outAddr, Value kAddr, Value counterAddr, Value len, Value encryptedCounterAddr, Value usedPtr) {
+        Variable result = newVariable(len.getValueKind());
+        append(new AMD64CounterModeAESCryptOp(asAllocatable(inAddr),
+                        asAllocatable(outAddr),
+                        asAllocatable(kAddr),
+                        asAllocatable(counterAddr),
+                        asAllocatable(len),
+                        asAllocatable(encryptedCounterAddr),
+                        asAllocatable(usedPtr),
+                        result,
+                        getArrayLengthOffset() - getArrayBaseOffset(JavaKind.Int)));
         return result;
     }
 
     @Override
-    public Variable emitHasNegatives(Value array, Value length) {
-        Variable result = newVariable(LIRKind.value(AMD64Kind.DWORD));
-        append(new AMD64HasNegativesOp(this, result, asAllocatable(array), asAllocatable(length)));
-        return result;
+    public void emitGHASHProcessBlocks(Value state, Value hashSubkey, Value data, Value blocks) {
+        append(new AMD64GHASHProcessBlocksOp(this, asAllocatable(state), asAllocatable(hashSubkey), asAllocatable(data), asAllocatable(blocks)));
     }
 
-    protected boolean supports(CPUFeature feature) {
-        return ((AMD64) target().arch).getFeatures().contains(feature);
+    @Override
+    public void emitBigIntegerMultiplyToLen(Value x, Value xlen, Value y, Value ylen, Value z, Value zlen) {
+        RegisterValue rX = AMD64.rdi.asValue(x.getValueKind());
+        RegisterValue rXlen = AMD64.rax.asValue(xlen.getValueKind());
+        RegisterValue rY = AMD64.rsi.asValue(y.getValueKind());
+        RegisterValue rYlen = AMD64.rcx.asValue(ylen.getValueKind());
+        RegisterValue rZ = AMD64.r8.asValue(z.getValueKind());
+        RegisterValue rZlen = AMD64.r11.asValue(zlen.getValueKind());
+
+        emitMove(rX, x);
+        emitMove(rXlen, xlen);
+        emitMove(rY, y);
+        emitMove(rYlen, ylen);
+        emitMove(rZ, z);
+        emitMove(rZlen, zlen);
+
+        append(new AMD64BigIntegerMultiplyToLenOp(rX, rXlen, rY, rYlen, rZ, rZlen, getHeapBaseRegister()));
+    }
+
+    @SuppressWarnings("unchecked")
+    protected boolean supports(EnumSet<?> runtimeCheckedCPUFeatures, CPUFeature feature) {
+        assert runtimeCheckedCPUFeatures == null || runtimeCheckedCPUFeatures.isEmpty() || runtimeCheckedCPUFeatures.iterator().next() instanceof CPUFeature;
+        EnumSet<CPUFeature> typedFeatures = (EnumSet<CPUFeature>) runtimeCheckedCPUFeatures;
+        return typedFeatures != null && typedFeatures.contains(feature) || ((AMD64) target().arch).getFeatures().contains(feature);
     }
 
     /**
      * Return the maximum size of vector registers used in SSE/AVX instructions.
      */
     @Override
-    public AVXSize getMaxVectorSize() {
-        if (supports(AMD64.CPUFeature.AVX512VL)) {
+    public AVXSize getMaxVectorSize(EnumSet<?> runtimeCheckedCPUFeatures) {
+        if (supports(runtimeCheckedCPUFeatures, AMD64.CPUFeature.AVX512VL)) {
             return AVXSize.ZMM;
         }
-        if (supports(AMD64.CPUFeature.AVX2)) {
+        if (supports(runtimeCheckedCPUFeatures, AMD64.CPUFeature.AVX2)) {
             return AVXSize.YMM;
         }
         return AVXSize.XMM;
@@ -705,17 +833,19 @@ public abstract class AMD64LIRGenerator extends LIRGenerator {
         return 4096;
     }
 
+    @SuppressWarnings("unchecked")
     @Override
-    public Variable emitArrayIndexOf(int arrayBaseOffset, JavaKind valueKind, boolean findTwoConsecutive, boolean withMask, Value arrayPointer, Value arrayOffset, Value arrayLength, Value fromIndex,
-                    Value... searchValues) {
+    public Variable emitArrayIndexOf(Stride stride, boolean findTwoConsecutive, boolean withMask, EnumSet<?> runtimeCheckedCPUFeatures,
+                    Value arrayPointer, Value arrayOffset, Value arrayLength, Value fromIndex, Value... searchValues) {
         Variable result = newVariable(LIRKind.value(AMD64Kind.DWORD));
-        append(AMD64ArrayIndexOfOp.movParamsAndCreate(arrayBaseOffset, valueKind, findTwoConsecutive, withMask, this, result, arrayPointer, arrayOffset, arrayLength, fromIndex,
-                        searchValues));
+        append(AMD64ArrayIndexOfOp.movParamsAndCreate(stride, findTwoConsecutive, withMask, this, (EnumSet<CPUFeature>) runtimeCheckedCPUFeatures,
+                        result, arrayPointer, arrayOffset, arrayLength, fromIndex, searchValues));
         return result;
     }
 
+    @SuppressWarnings("unchecked")
     @Override
-    public void emitStringLatin1Inflate(Value src, Value dst, Value len) {
+    public void emitStringLatin1Inflate(EnumSet<?> runtimeCheckedCPUFeatures, Value src, Value dst, Value len) {
         RegisterValue rsrc = AMD64.rsi.asValue(src.getValueKind());
         RegisterValue rdst = AMD64.rdi.asValue(dst.getValueKind());
         RegisterValue rlen = AMD64.rdx.asValue(len.getValueKind());
@@ -724,11 +854,12 @@ public abstract class AMD64LIRGenerator extends LIRGenerator {
         emitMove(rdst, dst);
         emitMove(rlen, len);
 
-        append(new AMD64StringLatin1InflateOp(this, getAVX3Threshold(), rsrc, rdst, rlen));
+        append(new AMD64StringLatin1InflateOp(this, (EnumSet<CPUFeature>) runtimeCheckedCPUFeatures, getAVX3Threshold(), rsrc, rdst, rlen));
     }
 
+    @SuppressWarnings("unchecked")
     @Override
-    public Variable emitStringUTF16Compress(Value src, Value dst, Value len) {
+    public Variable emitStringUTF16Compress(EnumSet<?> runtimeCheckedCPUFeatures, Value src, Value dst, Value len) {
         RegisterValue rsrc = AMD64.rsi.asValue(src.getValueKind());
         RegisterValue rdst = AMD64.rdi.asValue(dst.getValueKind());
         RegisterValue rlen = AMD64.rdx.asValue(len.getValueKind());
@@ -740,7 +871,7 @@ public abstract class AMD64LIRGenerator extends LIRGenerator {
         LIRKind reskind = LIRKind.value(AMD64Kind.DWORD);
         RegisterValue rres = AMD64.rax.asValue(reskind);
 
-        append(new AMD64StringUTF16CompressOp(this, getAVX3Threshold(), rres, rsrc, rdst, rlen));
+        append(new AMD64StringUTF16CompressOp(this, (EnumSet<CPUFeature>) runtimeCheckedCPUFeatures, getAVX3Threshold(), rres, rsrc, rdst, rlen));
 
         Variable res = newVariable(reskind);
         emitMove(res, rres);

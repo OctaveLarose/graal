@@ -35,10 +35,10 @@ import org.graalvm.nativeimage.c.type.CIntPointer;
 import org.graalvm.nativeimage.c.type.WordPointer;
 import org.graalvm.word.PointerBase;
 
-import com.oracle.svm.jni.nativeapi.JNIFieldId;
-import com.oracle.svm.jni.nativeapi.JNIMethodId;
-import com.oracle.svm.jni.nativeapi.JNINativeInterface;
-import com.oracle.svm.jni.nativeapi.JNIObjectHandle;
+import com.oracle.svm.core.jni.headers.JNIFieldId;
+import com.oracle.svm.core.jni.headers.JNIMethodId;
+import com.oracle.svm.core.jni.headers.JNINativeInterface;
+import com.oracle.svm.core.jni.headers.JNIObjectHandle;
 
 @CStruct(value = "jvmtiInterface_1")
 @CContext(JvmtiDirectives.class)
@@ -49,6 +49,15 @@ public interface JvmtiInterface extends PointerBase {
     int JVMTI_VERSION_9 = 0x30090000;
     @SuppressWarnings("unused")//
     int JVMTI_VERSION_11 = 0x300B0000;
+    int JVMTI_VERSION_19 = 0x30130000;
+
+    @CField("GetVersionNumber")
+    GetVersionNumberFunctionPointer GetVersionNumber();
+
+    interface GetVersionNumberFunctionPointer extends CFunctionPointer {
+        @InvokeCFunctionPointer
+        JvmtiError invoke(JvmtiEnv env, CIntPointer versionPtr);
+    }
 
     @CField("GetJNIFunctionTable")
     GetJNIFunctionTableFunctionPointer GetJNIFunctionTable();
@@ -177,6 +186,14 @@ public interface JvmtiInterface extends PointerBase {
     interface GetLocalInstanceFunctionPointer extends CFunctionPointer {
         @InvokeCFunctionPointer
         JvmtiError invoke(JvmtiEnv env, JNIObjectHandle thread, int depth, PointerBase valuePtr);
+    }
+
+    @CField("GetCurrentThread")
+    GetCurrentThreadFunctionPointer GetCurrentThread();
+
+    interface GetCurrentThreadFunctionPointer extends CFunctionPointer {
+        @InvokeCFunctionPointer
+        JvmtiError invoke(JvmtiEnv env, PointerBase threadPtr);
     }
 
     @CField("GetClassLoader")

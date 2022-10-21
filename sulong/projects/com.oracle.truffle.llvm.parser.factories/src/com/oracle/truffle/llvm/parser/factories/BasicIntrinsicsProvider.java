@@ -49,6 +49,7 @@ import com.oracle.truffle.llvm.runtime.NodeFactory;
 import com.oracle.truffle.llvm.runtime.nodes.api.LLVMExpressionNode;
 import com.oracle.truffle.llvm.runtime.nodes.func.LLVMArgNodeGen;
 import com.oracle.truffle.llvm.runtime.nodes.func.LLVMRaiseExceptionNodeGen;
+import com.oracle.truffle.llvm.runtime.nodes.func.LLVMRaiseExceptionWindowsNodeGen;
 import com.oracle.truffle.llvm.runtime.nodes.intrinsics.c.LLVMAbortNodeGen;
 import com.oracle.truffle.llvm.runtime.nodes.intrinsics.c.LLVMCMathsIntrinsicsFactory;
 import com.oracle.truffle.llvm.runtime.nodes.intrinsics.c.LLVMCMathsIntrinsicsFactory.LLVMACosNodeGen;
@@ -147,8 +148,8 @@ import com.oracle.truffle.llvm.runtime.nodes.intrinsics.llvm.arith.LLVMComplexDo
 import com.oracle.truffle.llvm.runtime.nodes.intrinsics.llvm.arith.LLVMComplexDoubleMulNodeGen;
 import com.oracle.truffle.llvm.runtime.nodes.intrinsics.llvm.arith.LLVMComplexFloatDivNodeGen;
 import com.oracle.truffle.llvm.runtime.nodes.intrinsics.llvm.arith.LLVMComplexFloatMulNodeGen;
-import com.oracle.truffle.llvm.runtime.nodes.intrinsics.multithreading.LLVMThreadKeyIntrinsicsFactory;
 import com.oracle.truffle.llvm.runtime.nodes.intrinsics.multithreading.LLVMThreadIntrinsicsFactory;
+import com.oracle.truffle.llvm.runtime.nodes.intrinsics.multithreading.LLVMThreadKeyIntrinsicsFactory;
 import com.oracle.truffle.llvm.runtime.nodes.intrinsics.rust.LLVMPanicNodeGen;
 import com.oracle.truffle.llvm.runtime.nodes.intrinsics.sulong.LLVMPrintStackTraceNodeGen;
 import com.oracle.truffle.llvm.runtime.nodes.intrinsics.sulong.LLVMRunDestructorFunctionsNodeGen;
@@ -359,6 +360,8 @@ public class BasicIntrinsicsProvider implements LLVMIntrinsicProvider {
         registerManagedAllocationIntrinsics();
         registerThreadIntrinsics();
         registerDynamicLibraryIntrinsics();
+
+        registerWindowsIntrinsics();
     }
 
     protected static LLVMExpressionNode[] argumentsArray(List<LLVMExpressionNode> arguments, int startIndex, int arity) {
@@ -517,10 +520,12 @@ public class BasicIntrinsicsProvider implements LLVMIntrinsicProvider {
         add("core::panicking::panic", (args, nodeFactory) -> LLVMPanicNodeGen.create(args.get(1)));
     }
 
+    private static void registerWindowsIntrinsics() {
+        add("ExitProcess", (args, nodeFactory) -> LLVMExitNodeGen.create(args.get(1)));
+    }
+
     private static void registerMathFunctionIntrinsics() {
-        // TODO (chaeubl): There is no doubt that not all of these intrinsics are valid as they use
-        // double arithmetics to simulate floating arithmetics, which can change the precision.
-        // Furthermore, it is possible that there are mismatches between Java and C semantics.
+        // TODO (chaeubl): It is possible that there are mismatches between Java and C semantics.
         addFloatingPointMathFunction("sqrt", (args, nodeFactory) -> LLVMSqrtNodeGen.create(args.get(1)));
         addFloatingPointMathFunction("log", (args, nodeFactory) -> LLVMLogNodeGen.create(args.get(1)));
         addFloatingPointMathFunction("log2", (args, nodeFactory) -> LLVMLog2NodeGen.create(args.get(1)));
@@ -582,6 +587,7 @@ public class BasicIntrinsicsProvider implements LLVMIntrinsicProvider {
     }
 
     private static void registerExceptionIntrinsics() {
+        add("_CxxThrowException", (args, nodeFactory) -> LLVMRaiseExceptionWindowsNodeGen.create(args.get(1), args.get(2)));
         add("_Unwind_RaiseException", (args, nodeFactory) -> LLVMRaiseExceptionNodeGen.create(args.get(1)));
         add("__cxa_call_unexpected", (args, nodeFactory) -> LLVMAbortNodeGen.create());
     }
@@ -621,7 +627,6 @@ public class BasicIntrinsicsProvider implements LLVMIntrinsicProvider {
     private static void addFloatingPointMathFunction(String functionName, LLVMIntrinsicFactory factory) {
         add(functionName, factory, FACTORIES);
         add(functionName + "f", factory, FACTORIES);
-        add(functionName + "l", factory, FACTORIES);
     }
 
     private static void addIntegerMathFunction(String functionName, LLVMIntrinsicFactory factory) {

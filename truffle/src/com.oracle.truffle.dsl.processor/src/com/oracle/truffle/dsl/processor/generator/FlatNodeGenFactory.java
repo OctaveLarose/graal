@@ -47,8 +47,6 @@ import static com.oracle.truffle.dsl.processor.java.ElementUtils.findAnnotationM
 import static com.oracle.truffle.dsl.processor.java.ElementUtils.firstLetterLowerCase;
 import static com.oracle.truffle.dsl.processor.java.ElementUtils.firstLetterUpperCase;
 import static com.oracle.truffle.dsl.processor.java.ElementUtils.getAnnotationValue;
-import static com.oracle.truffle.dsl.processor.java.ElementUtils.getQualifiedName;
-import static com.oracle.truffle.dsl.processor.java.ElementUtils.getReadableSignature;
 import static com.oracle.truffle.dsl.processor.java.ElementUtils.getSimpleName;
 import static com.oracle.truffle.dsl.processor.java.ElementUtils.getTypeId;
 import static com.oracle.truffle.dsl.processor.java.ElementUtils.getVisibility;
@@ -806,7 +804,6 @@ public class FlatNodeGenFactory {
         }
 
         List<Object> bulkStateSet = new ArrayList<>();
-        Set<String> languagesChecked = new HashSet<>();
 
         for (SpecializationData specialization : filteredSpecializations) {
 
@@ -841,73 +838,12 @@ public class FlatNodeGenFactory {
                     bulkStateSet.add(guard);
                 }
                 if (specialization.isDynamicParameterBound(guard.getExpression(), true)) {
-                    if (!specialization.isOnlyLanguageReferencesBound(guard.getExpression())) {
-                        /*
-                         * Guards with only language references can be executed.
-                         */
-                        continue;
-                    }
-                }
-                usedGuards.add(guard);
-            }
-
-            for (CacheExpression cache : specialization.getCaches()) {
-                if (!cache.isAlwaysInitialized()) {
+                    /*
+                     * Guards with no dynamic parameters can be executed.
+                     */
                     continue;
                 }
-                if (cache.isCachedLanguage()) {
-                    boolean needsLocal = false;
-                    for (GuardExpression guard : usedGuards) {
-                        if (specialization.isExpressionBindsCache(guard.getExpression(), cache)) {
-                            needsLocal = true;
-                            break;
-                        }
-                    }
-                    if (!needsLocal) {
-                        for (CacheExpression otherCache : specialization.getCaches()) {
-                            if (cache == otherCache) {
-                                continue;
-                            }
-                            if (specialization.isExpressionBindsCache(otherCache.getDefaultExpression(), cache)) {
-                                needsLocal = true;
-                                break;
-                            }
-                        }
-                    }
-                    TypeMirror languageType = cache.getLanguageType();
-                    boolean needsCheck = false;
-                    if (!usedGuards.isEmpty()) {
-                        needsCheck = languagesChecked.add(ElementUtils.getTypeId(languageType));
-                    }
-                    CodeTreeBuilder b = builder.create();
-                    if (needsCheck) {
-                        b.startIf().string("language == null || language.getClass() != ").typeLiteral(languageType).end().startBlock();
-                        b.startStatement().startStaticCall(types.CompilerDirectives, "transferToInterpreterAndInvalidate").end().end();
-                        b.startThrow().startStaticCall(types.CompilerDirectives, "shouldNotReachHere");
-                        b.startStaticCall(context.getType(String.class), "format");
-                        b.doubleQuote(String.format("Specialization '%s' in node class '%s' is enabled for AOT generation. " +
-                                        "The specialization declares a @%s for language class %s but was prepared for AOT with language class '%%s'. " +
-                                        "Match the language used in the language reference or exclude the specialization from AOT generation with @%s.%s to resolve this problem.",
-                                        getReadableSignature(specialization.getMethod()),
-                                        getQualifiedName(specialization.getNode().getTemplateType()),
-                                        getSimpleName(types.CachedLanguage),
-                                        getQualifiedName(cache.getLanguageType()),
-                                        getSimpleName(types.GenerateAOT),
-                                        getSimpleName(types.GenerateAOT_Exclude)));
-                        b.string("language != null ? language.getClass().getName() : \"null\"");
-                        b.end();
-                        b.end().end(); // static call, throw,
-                        b.end(); // if block
-                    }
-                    if (needsLocal) {
-                        b.startStatement();
-                        b.type(languageType);
-                        b.string(" ", createCacheLocalName(specialization, cache));
-                        b.string(" = ").maybeCast(types.TruffleLanguage, cache.getLanguageType(), "language");
-                        b.end(); // statement
-                    }
-                    tripples.add(new IfTriple(b.build(), null, null));
-                }
+                usedGuards.add(guard);
             }
 
             for (GuardExpression guard : usedGuards) {
@@ -1899,7 +1835,7 @@ public class FlatNodeGenFactory {
 
         boolean isExecutableInUncached = effectiveEvaluatedCount != node.getExecutionCount() && !node.getChildren().isEmpty();
         if (!isExecutableInUncached) {
-            method.getAnnotationMirrors().add(new CodeAnnotationMirror(types.CompilerDirectives_TruffleBoundary));
+            GeneratorUtils.addBoundaryOrTransferToInterpreter(method, builder);
         }
 
         if (forType.getMethod() != null) {
@@ -2950,7 +2886,7 @@ public class FlatNodeGenFactory {
                     CodeTree uncachedNode = DSLExpressionGenerator.write(child.getUncachedExpression(), null, null);
                     builder.startReturn().tree(uncachedNode).end();
                 } else {
-                    method.getAnnotationMirrors().add(new CodeAnnotationMirror(types.CompilerDirectives_TruffleBoundary));
+                    GeneratorUtils.addBoundaryOrTransferToInterpreter(method, null);
                     builder.tree(GeneratorUtils.createShouldNotReachHere("This getter method cannot be used for uncached node versions as it requires child nodes to be present."));
                 }
             } else {
@@ -3986,7 +3922,14 @@ public class FlatNodeGenFactory {
 
         String includeFrameParameter = null;
         if (specialization != null && specialization.getFrame() != null) {
-            includeFrameParameter = FRAME_VALUE;
+            if (ElementUtils.typeEquals(types.MaterializedFrame, specialization.getFrame().getType())) {
+                includeFrameParameter = FRAME_VALUE;
+            } else {
+                includeFrameParameter = FRAME_VALUE + "Materialized";
+                CodeTreeBuilder read = builder.create().startCall(FRAME_VALUE, "materialize").end();
+                LocalVariable materializedFrame = new LocalVariable(types.MaterializedFrame, FRAME_VALUE, read.build());
+                frameState.set(includeFrameParameter, materializedFrame);
+            }
         }
         CodeExecutableElement boundaryMethod = new CodeExecutableElement(modifiers(PRIVATE), parentMethod.getReturnType(), boundaryMethodName);
         GeneratorUtils.mergeSupressWarnings(boundaryMethod, "static-method");
@@ -4956,9 +4899,7 @@ public class FlatNodeGenFactory {
             } else {
                 expression = cache.getDefaultExpression();
                 if (aot) {
-                    if (!specialization.isOnlyLanguageReferencesBound(expression)) {
-                        expression = substituteManualToAutoDispatch(expression);
-                    }
+                    expression = substituteManualToAutoDispatch(expression);
                 }
                 if (specialization.needsTruffleBoundary() &&
                                 (specialization.isAnyLibraryBoundInGuard() || specialization.needsVirtualFrame())) {

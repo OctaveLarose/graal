@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2013, 2020, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2013, 2022, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -24,22 +24,20 @@
  */
 package org.graalvm.compiler.replacements.nodes;
 
-import static org.graalvm.compiler.core.common.GraalOptions.UseGraalStubs;
 import static org.graalvm.compiler.nodeinfo.InputType.Memory;
 
-import org.graalvm.compiler.core.common.spi.ForeignCallLinkage;
+import java.util.EnumSet;
+
+import org.graalvm.compiler.core.common.Stride;
+import org.graalvm.compiler.core.common.spi.ForeignCallDescriptor;
 import org.graalvm.compiler.core.common.type.StampFactory;
 import org.graalvm.compiler.graph.NodeClass;
+import org.graalvm.compiler.lir.GenerateStub;
 import org.graalvm.compiler.nodeinfo.NodeCycles;
 import org.graalvm.compiler.nodeinfo.NodeInfo;
 import org.graalvm.compiler.nodeinfo.NodeSize;
 import org.graalvm.compiler.nodes.NamedLocationIdentity;
 import org.graalvm.compiler.nodes.ValueNode;
-import org.graalvm.compiler.nodes.memory.AbstractMemoryCheckpoint;
-import org.graalvm.compiler.nodes.memory.MemoryAccess;
-import org.graalvm.compiler.nodes.memory.MemoryKill;
-import org.graalvm.compiler.nodes.memory.MultiMemoryKill;
-import org.graalvm.compiler.nodes.spi.LIRLowerable;
 import org.graalvm.compiler.nodes.spi.NodeLIRBuilderTool;
 import org.graalvm.compiler.replacements.NodeStrideUtil;
 import org.graalvm.word.LocationIdentity;
@@ -53,14 +51,14 @@ import jdk.vm.ci.meta.JavaKind;
  * compression and inflation depending on {@code strideSrc} and {@code strideDst}.
  */
 @NodeInfo(allowedUsageTypes = {Memory}, cycles = NodeCycles.CYCLES_UNKNOWN, size = NodeSize.SIZE_128)
-public class ArrayCopyWithConversionsNode extends AbstractMemoryCheckpoint implements LIRLowerable, MemoryAccess, MultiMemoryKill {
+public class ArrayCopyWithConversionsNode extends MemoryKillStubIntrinsicNode {
 
     public static final NodeClass<ArrayCopyWithConversionsNode> TYPE = NodeClass.create(ArrayCopyWithConversionsNode.class);
 
     public static final LocationIdentity[] KILLED_LOCATIONS = {NamedLocationIdentity.getArrayLocation(JavaKind.Byte), NamedLocationIdentity.OFF_HEAP_LOCATION};
 
-    private final JavaKind strideSrc;
-    private final JavaKind strideDst;
+    private final Stride strideSrc;
+    private final Stride strideDst;
     @Input protected ValueNode arraySrc;
     @Input protected ValueNode offsetSrc;
     @Input protected ValueNode arrayDst;
@@ -72,8 +70,6 @@ public class ArrayCopyWithConversionsNode extends AbstractMemoryCheckpoint imple
      * {@link org.graalvm.compiler.core.common.StrideUtil}.
      */
     @OptionalInput protected ValueNode dynamicStrides;
-
-    @OptionalInput(Memory) protected MemoryKill lastLocationAccess;
 
     /**
      * Arraycopy operation for arbitrary source and destination arrays, with arbitrary byte offset,
@@ -91,9 +87,16 @@ public class ArrayCopyWithConversionsNode extends AbstractMemoryCheckpoint imple
      * @param length length of the region to copy, scaled to strideDst.
      */
     public ArrayCopyWithConversionsNode(ValueNode arraySrc, ValueNode offsetSrc, ValueNode arrayDst, ValueNode offsetDst, ValueNode length,
-                    @ConstantNodeParameter JavaKind strideSrc,
-                    @ConstantNodeParameter JavaKind strideDst) {
-        this(TYPE, arraySrc, offsetSrc, arrayDst, offsetDst, length, null, strideSrc, strideDst);
+                    @ConstantNodeParameter Stride strideSrc,
+                    @ConstantNodeParameter Stride strideDst) {
+        this(TYPE, arraySrc, offsetSrc, arrayDst, offsetDst, length, null, strideSrc, strideDst, null);
+    }
+
+    public ArrayCopyWithConversionsNode(ValueNode arraySrc, ValueNode offsetSrc, ValueNode arrayDst, ValueNode offsetDst, ValueNode length,
+                    @ConstantNodeParameter Stride strideSrc,
+                    @ConstantNodeParameter Stride strideDst,
+                    @ConstantNodeParameter EnumSet<?> runtimeCheckedCPUFeatures) {
+        this(TYPE, arraySrc, offsetSrc, arrayDst, offsetDst, length, null, strideSrc, strideDst, runtimeCheckedCPUFeatures);
     }
 
     /**
@@ -101,14 +104,23 @@ public class ArrayCopyWithConversionsNode extends AbstractMemoryCheckpoint imple
      * {@link org.graalvm.compiler.core.common.StrideUtil}.
      */
     public ArrayCopyWithConversionsNode(ValueNode arraySrc, ValueNode offsetSrc, ValueNode arrayDst, ValueNode offsetDst, ValueNode length, ValueNode dynamicStrides) {
-        this(TYPE, arraySrc, offsetSrc, arrayDst, offsetDst, length, dynamicStrides, null, null);
+        this(TYPE, arraySrc, offsetSrc, arrayDst, offsetDst, length, dynamicStrides, null, null, null);
+    }
+
+    public ArrayCopyWithConversionsNode(ValueNode arraySrc, ValueNode offsetSrc, ValueNode arrayDst, ValueNode offsetDst, ValueNode length, ValueNode dynamicStrides,
+                    @ConstantNodeParameter EnumSet<?> runtimeCheckedCPUFeatures) {
+        this(TYPE, arraySrc, offsetSrc, arrayDst, offsetDst, length, dynamicStrides, null, null, runtimeCheckedCPUFeatures);
     }
 
     protected ArrayCopyWithConversionsNode(NodeClass<? extends ArrayCopyWithConversionsNode> c,
                     ValueNode arraySrc, ValueNode offsetSrc, ValueNode arrayDst, ValueNode offsetDst, ValueNode length, ValueNode dynamicStrides,
-                    @ConstantNodeParameter JavaKind strideSrc,
-                    @ConstantNodeParameter JavaKind strideDst) {
-        super(c, StampFactory.forKind(JavaKind.Void));
+                    @ConstantNodeParameter Stride strideSrc,
+                    @ConstantNodeParameter Stride strideDst,
+                    @ConstantNodeParameter EnumSet<?> runtimeCheckedCPUFeatures) {
+        // TruffleStrings is using the same stub generated by this node to read from
+        // byte[]/char[]/int[] arrays and native buffers, so we have to use LocationIdentity.any()
+        // here.
+        super(c, StampFactory.forKind(JavaKind.Void), runtimeCheckedCPUFeatures, LocationIdentity.any());
         this.strideSrc = strideSrc;
         this.strideDst = strideDst;
         this.arraySrc = arraySrc;
@@ -120,52 +132,73 @@ public class ArrayCopyWithConversionsNode extends AbstractMemoryCheckpoint imple
     }
 
     @NodeIntrinsic
+    @GenerateStub(name = "arrayCopyWithConversionsS1S1", parameters = {"S1", "S1"})
+    @GenerateStub(name = "arrayCopyWithConversionsS1S2", parameters = {"S1", "S2"})
+    @GenerateStub(name = "arrayCopyWithConversionsS1S4", parameters = {"S1", "S4"})
+    @GenerateStub(name = "arrayCopyWithConversionsS2S1", parameters = {"S2", "S1"})
+    @GenerateStub(name = "arrayCopyWithConversionsS2S2", parameters = {"S2", "S2"})
+    @GenerateStub(name = "arrayCopyWithConversionsS2S4", parameters = {"S2", "S4"})
+    @GenerateStub(name = "arrayCopyWithConversionsS4S1", parameters = {"S4", "S1"})
+    @GenerateStub(name = "arrayCopyWithConversionsS4S2", parameters = {"S4", "S2"})
+    @GenerateStub(name = "arrayCopyWithConversionsS4S4", parameters = {"S4", "S4"})
     public static native void arrayCopy(Object arraySrc, long offsetSrc, Object arrayDst, long offsetDst, int length,
-                    @ConstantNodeParameter JavaKind strideSrc,
-                    @ConstantNodeParameter JavaKind strideDst);
+                    @ConstantNodeParameter Stride strideSrc,
+                    @ConstantNodeParameter Stride strideDst);
 
     @NodeIntrinsic
+    public static native void arrayCopy(Object arraySrc, long offsetSrc, Object arrayDst, long offsetDst, int length,
+                    @ConstantNodeParameter Stride strideSrc,
+                    @ConstantNodeParameter Stride strideDst,
+                    @ConstantNodeParameter EnumSet<?> runtimeCheckedCPUFeatures);
+
+    @NodeIntrinsic
+    @GenerateStub(name = "arrayCopyWithConversionsDynamicStrides")
     public static native void arrayCopy(Object arraySrc, long offsetSrc, Object arrayDst, long offsetDst, int length, int stride);
+
+    @NodeIntrinsic
+    public static native void arrayCopy(Object arraySrc, long offsetSrc, Object arrayDst, long offsetDst, int length, int stride,
+                    @ConstantNodeParameter EnumSet<?> runtimeCheckedCPUFeatures);
 
     public int getDirectStubCallIndex() {
         return NodeStrideUtil.getDirectStubCallIndex(dynamicStrides, strideSrc, strideDst);
     }
 
     @Override
-    public void generate(NodeLIRBuilderTool gen) {
-        if (UseGraalStubs.getValue(graph().getOptions())) {
-            ForeignCallLinkage linkage = gen.lookupGraalStub(this);
-            if (linkage != null) {
-                if (getDirectStubCallIndex() < 0) {
-                    gen.getLIRGeneratorTool().emitForeignCall(linkage, null, gen.operand(arraySrc), gen.operand(offsetSrc), gen.operand(arrayDst), gen.operand(offsetDst), gen.operand(length),
-                                    gen.operand(dynamicStrides));
-                } else {
-                    gen.getLIRGeneratorTool().emitForeignCall(linkage, null, gen.operand(arraySrc), gen.operand(offsetSrc), gen.operand(arrayDst), gen.operand(offsetDst), gen.operand(length));
-                }
-                return;
-            }
-        }
-        generateArrayCopy(gen);
+    public ForeignCallDescriptor getForeignCallDescriptor() {
+        return ArrayCopyWithConversionsForeignCalls.getStub(this);
     }
 
-    protected void generateArrayCopy(NodeLIRBuilderTool gen) {
+    @Override
+    public ValueNode[] getForeignCallArguments() {
+        if (getDirectStubCallIndex() < 0) {
+            return new ValueNode[]{arraySrc, offsetSrc, arrayDst, offsetDst, length, dynamicStrides};
+        } else {
+            return new ValueNode[]{arraySrc, offsetSrc, arrayDst, offsetDst, length};
+        }
+    }
+
+    @Override
+    public void emitIntrinsic(NodeLIRBuilderTool gen) {
         if (getDirectStubCallIndex() < 0) {
             gen.getLIRGeneratorTool().emitArrayCopyWithConversion(
-                            gen.operand(arraySrc), gen.operand(offsetSrc), gen.operand(arrayDst), gen.operand(offsetDst), gen.operand(length), gen.operand(dynamicStrides));
+                            getRuntimeCheckedCPUFeatures(),
+                            gen.operand(arraySrc),
+                            gen.operand(offsetSrc),
+                            gen.operand(arrayDst),
+                            gen.operand(offsetDst),
+                            gen.operand(length),
+                            gen.operand(dynamicStrides));
         } else {
-            gen.getLIRGeneratorTool().emitArrayCopyWithConversion(NodeStrideUtil.getConstantStrideA(dynamicStrides, strideSrc), NodeStrideUtil.getConstantStrideB(dynamicStrides, strideDst),
-                            gen.operand(arraySrc), gen.operand(offsetSrc), gen.operand(arrayDst), gen.operand(offsetDst), gen.operand(length));
+            gen.getLIRGeneratorTool().emitArrayCopyWithConversion(
+                            NodeStrideUtil.getConstantStrideA(dynamicStrides, strideSrc),
+                            NodeStrideUtil.getConstantStrideB(dynamicStrides, strideDst),
+                            getRuntimeCheckedCPUFeatures(),
+                            gen.operand(arraySrc),
+                            gen.operand(offsetSrc),
+                            gen.operand(arrayDst),
+                            gen.operand(offsetDst),
+                            gen.operand(length));
         }
-    }
-
-    /**
-     * TruffleStrings is using the same stub generated by this node to read from
-     * {@code byte[]}/{@code char[]}/{@code int[]} arrays and native buffers, so we have to use
-     * {@link LocationIdentity#any()} here.
-     */
-    @Override
-    public LocationIdentity getLocationIdentity() {
-        return LocationIdentity.any();
     }
 
     /**
@@ -175,16 +208,5 @@ public class ArrayCopyWithConversionsNode extends AbstractMemoryCheckpoint imple
     @Override
     public LocationIdentity[] getKilledLocationIdentities() {
         return KILLED_LOCATIONS;
-    }
-
-    @Override
-    public MemoryKill getLastLocationAccess() {
-        return lastLocationAccess;
-    }
-
-    @Override
-    public void setLastLocationAccess(MemoryKill lla) {
-        updateUsagesInterface(lastLocationAccess, lla);
-        lastLocationAccess = lla;
     }
 }

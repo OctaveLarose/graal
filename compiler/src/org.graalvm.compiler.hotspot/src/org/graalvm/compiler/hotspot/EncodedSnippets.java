@@ -306,7 +306,8 @@ public class EncodedSnippets {
             // @formatter:on
             try (DebugContext.Scope scope = debug.scope("LibGraal.DecodeSnippet", result)) {
                 PEGraphDecoder graphDecoder = new SubstitutionGraphDecoder(providers, result, replacements, parameterPlugin, method, INLINE_AFTER_PARSING, encodedGraph, mustSucceed);
-                graphDecoder.decode(method, isSubstitution, encodedGraph.trackNodeSourcePosition());
+                assert result.isSubstitution();
+                graphDecoder.decode(method);
                 postDecode(debug, result, original);
                 assert result.verify();
                 return result;
@@ -319,7 +320,7 @@ public class EncodedSnippets {
     private static void postDecode(DebugContext debug, StructuredGraph result, ResolvedJavaMethod original) {
         debug.dump(DebugContext.VERBOSE_LEVEL, result, "Before PartialIntrinsicCallTargetNode replacement");
         for (PartialIntrinsicCallTargetNode partial : result.getNodes(PartialIntrinsicCallTargetNode.TYPE)) {
-            // Ensure the orignal method matches
+            // Ensure the original method matches
             assert partial.checkName(original);
             ValueNode[] arguments = partial.arguments().toArray(new ValueNode[partial.arguments().size()]);
             MethodCallTargetNode target = result.add(new MethodCallTargetNode(partial.invokeKind(), original,
@@ -347,7 +348,7 @@ public class EncodedSnippets {
                         IntrinsicContext.CompilationContext context, EncodedGraph encodedGraph, boolean mustSucceed) {
             super(providers.getCodeCache().getTarget().arch, result, providers, null,
                             replacements.getGraphBuilderPlugins().getInvocationPlugins(), new InlineInvokePlugin[0], parameterPlugin,
-                            null, null, null, new ConcurrentHashMap<>(), new ConcurrentHashMap<>(), false);
+                            null, null, null, new ConcurrentHashMap<>(), new ConcurrentHashMap<>(), false, false);
             this.method = method;
             this.encodedGraph = encodedGraph;
             this.mustSucceed = mustSucceed;
@@ -356,9 +357,7 @@ public class EncodedSnippets {
 
         @Override
         protected EncodedGraph lookupEncodedGraph(ResolvedJavaMethod lookupMethod,
-                        BytecodeProvider intrinsicBytecodeProvider,
-                        boolean isSubstitution,
-                        boolean trackNodeSourcePosition) {
+                        BytecodeProvider intrinsicBytecodeProvider) {
             if (lookupMethod.equals(method)) {
                 return encodedGraph;
             } else {

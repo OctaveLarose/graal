@@ -29,12 +29,11 @@ import java.net.URI;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
-import java.util.Map;
 
+import org.graalvm.collections.EconomicMap;
 import org.graalvm.nativeimage.impl.ConfigurationCondition;
 import org.graalvm.nativeimage.impl.RuntimeSerializationSupport;
-
-import com.oracle.svm.core.util.json.JSONParserException;
+import org.graalvm.util.json.JSONParserException;
 
 public class SerializationConfigurationParser extends ConfigurationParser {
 
@@ -42,19 +41,22 @@ public class SerializationConfigurationParser extends ConfigurationParser {
     public static final String CUSTOM_TARGET_CONSTRUCTOR_CLASS_KEY = "customTargetConstructorClass";
     private static final String SERIALIZATION_TYPES_KEY = "types";
     private static final String LAMBDA_CAPTURING_SERIALIZATION_TYPES_KEY = "lambdaCapturingTypes";
-
+    private static final String PROXY_SERIALIZATION_TYPES_KEY = "proxies";
     private final RuntimeSerializationSupport serializationSupport;
+    private final ProxyConfigurationParser proxyConfigurationParser;
 
     public SerializationConfigurationParser(RuntimeSerializationSupport serializationSupport, boolean strictConfiguration) {
         super(strictConfiguration);
         this.serializationSupport = serializationSupport;
+        this.proxyConfigurationParser = new ProxyConfigurationParser(
+                        (conditionalElement) -> serializationSupport.registerProxyClass(conditionalElement.getCondition(), conditionalElement.getElement()), strictConfiguration);
     }
 
     @Override
     public void parseAndRegister(Object json, URI origin) {
         if (json instanceof List) {
             parseOldConfiguration(asList(json, "first level of document must be an array of serialization lists"));
-        } else if (json instanceof Map) {
+        } else if (json instanceof EconomicMap) {
             parseNewConfiguration(asMap(json, "first level of document must be a map of serialization types"));
         } else {
             throw new JSONParserException("first level of document must either be an array of serialization lists or a map of serialization types");
@@ -65,7 +67,7 @@ public class SerializationConfigurationParser extends ConfigurationParser {
         parseSerializationTypes(asList(listOfSerializationConfigurationObjects, "second level of document must be serialization descriptor objects"), false);
     }
 
-    private void parseNewConfiguration(Map<String, Object> listOfSerializationConfigurationObjects) {
+    private void parseNewConfiguration(EconomicMap<String, Object> listOfSerializationConfigurationObjects) {
         if (!listOfSerializationConfigurationObjects.containsKey(SERIALIZATION_TYPES_KEY) || !listOfSerializationConfigurationObjects.containsKey(LAMBDA_CAPTURING_SERIALIZATION_TYPES_KEY)) {
             throw new JSONParserException("second level of document must be arrays of serialization descriptor objects");
         }
@@ -74,6 +76,10 @@ public class SerializationConfigurationParser extends ConfigurationParser {
         parseSerializationTypes(
                         asList(listOfSerializationConfigurationObjects.get(LAMBDA_CAPTURING_SERIALIZATION_TYPES_KEY), "lambdaCapturingTypes must be an array of serialization descriptor objects"),
                         true);
+
+        if (listOfSerializationConfigurationObjects.containsKey(PROXY_SERIALIZATION_TYPES_KEY)) {
+            proxyConfigurationParser.parseAndRegister(listOfSerializationConfigurationObjects.get(PROXY_SERIALIZATION_TYPES_KEY), null);
+        }
     }
 
     private void parseSerializationTypes(List<Object> listOfSerializationTypes, boolean lambdaCapturingTypes) {
@@ -82,7 +88,7 @@ public class SerializationConfigurationParser extends ConfigurationParser {
         }
     }
 
-    private void parseSerializationDescriptorObject(Map<String, Object> data, boolean lambdaCapturingType) {
+    private void parseSerializationDescriptorObject(EconomicMap<String, Object> data, boolean lambdaCapturingType) {
         if (lambdaCapturingType) {
             checkAttributes(data, "serialization descriptor object", Collections.singleton(NAME_KEY), Collections.singleton(CONDITIONAL_KEY));
         } else {

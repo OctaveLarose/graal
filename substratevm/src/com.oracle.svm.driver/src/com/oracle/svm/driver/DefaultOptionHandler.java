@@ -42,7 +42,7 @@ class DefaultOptionHandler extends NativeImage.OptionHandler<NativeImage> {
     private static final String requireValidJarFileMessage = "-jar requires a valid jarfile";
     private static final String newStyleClasspathOptionName = "--class-path";
 
-    private static final String addModulesOption = "--add-modules";
+    static final String addModulesOption = "--add-modules";
     private static final String addModulesErrorMessage = " requires modules to be specified";
 
     /* Defunct legacy options that we have to accept to maintain backward compatibility */
@@ -123,6 +123,10 @@ class DefaultOptionHandler extends NativeImage.OptionHandler<NativeImage> {
             case noServerOption:
                 args.poll();
                 NativeImage.showWarning("Ignoring server-mode native-image argument " + headArg + ".");
+                return true;
+            case "--enable-preview":
+                args.poll();
+                nativeImage.addCustomJavaArgs("--enable-preview");
                 return true;
         }
 

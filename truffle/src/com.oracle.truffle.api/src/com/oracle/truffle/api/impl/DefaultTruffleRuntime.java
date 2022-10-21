@@ -51,7 +51,6 @@ import java.util.ServiceLoader;
 import com.oracle.truffle.api.Assumption;
 import com.oracle.truffle.api.CallTarget;
 import com.oracle.truffle.api.CompilerDirectives;
-import com.oracle.truffle.api.RootCallTarget;
 import com.oracle.truffle.api.Truffle;
 import com.oracle.truffle.api.TruffleRuntime;
 import com.oracle.truffle.api.frame.Frame;
@@ -114,12 +113,6 @@ public final class DefaultTruffleRuntime implements TruffleRuntime {
     @Override
     public String getName() {
         return "Interpreted";
-    }
-
-    @SuppressWarnings("deprecation")
-    @Override
-    public RootCallTarget createCallTarget(RootNode rootNode) {
-        return rootNode.getCallTarget();
     }
 
     @Override
@@ -270,7 +263,17 @@ public final class DefaultTruffleRuntime implements TruffleRuntime {
                     throw new InternalError(e);
                 }
             } else {
-                return ServiceLoader.load(service);
+                ModuleLayer moduleLayer = truffleModule.getLayer();
+                Iterable<S> services;
+                if (moduleLayer != null) {
+                    services = ServiceLoader.load(moduleLayer, service);
+                } else {
+                    services = ServiceLoader.load(service, DefaultTruffleRuntime.class.getClassLoader());
+                }
+                if (!services.iterator().hasNext()) {
+                    services = ServiceLoader.load(service);
+                }
+                return services;
             }
         }
     }

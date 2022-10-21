@@ -44,11 +44,11 @@ import static com.oracle.truffle.api.CompilerDirectives.CompilationFinal;
 import static com.oracle.truffle.api.strings.AbstractTruffleString.checkArrayRange;
 import static com.oracle.truffle.api.strings.TStringGuards.isStride0;
 import static com.oracle.truffle.api.strings.TStringGuards.isStride1;
-import static com.oracle.truffle.api.strings.TStringGuards.isSupportedEncoding;
 import static com.oracle.truffle.api.strings.TStringGuards.isUTF16;
 import static com.oracle.truffle.api.strings.TStringGuards.isUTF16Or32;
 import static com.oracle.truffle.api.strings.TStringGuards.isUTF32;
 import static com.oracle.truffle.api.strings.TStringGuards.isUTF8;
+import static com.oracle.truffle.api.strings.TruffleString.ErrorHandling;
 
 import java.util.Arrays;
 
@@ -64,6 +64,7 @@ import org.graalvm.shadowed.org.jcodings.util.CaseInsensitiveBytesHash;
 import com.oracle.truffle.api.CompilerDirectives;
 import com.oracle.truffle.api.CompilerDirectives.TruffleBoundary;
 import com.oracle.truffle.api.nodes.Node;
+import com.oracle.truffle.api.profiles.BranchProfile;
 import com.oracle.truffle.api.profiles.ConditionProfile;
 
 final class JCodingsImpl implements JCodings {
@@ -106,8 +107,8 @@ final class JCodingsImpl implements JCodings {
     }
 
     @Override
-    public Encoding get(int encodingId) {
-        return TruffleString.Encoding.getJCoding(encodingId);
+    public Encoding get(TruffleString.Encoding encoding) {
+        return encoding.jCoding;
     }
 
     @Override
@@ -172,7 +173,7 @@ final class JCodingsImpl implements JCodings {
             return index * minLength(jCoding);
         }
         int offset = a.byteArrayOffset() + extraOffsetRaw;
-        int end = a.byteArrayOffset() + a.length() - extraOffsetRaw;
+        int end = a.byteArrayOffset() + a.length();
         int cpi = 0;
         int i = 0;
         while (i < a.length() - extraOffsetRaw) {
@@ -201,20 +202,18 @@ final class JCodingsImpl implements JCodings {
     }
 
     @Override
-    public int decode(AbstractTruffleString a, byte[] arrayA, int rawIndex, Encoding jCoding) {
+    public int decode(AbstractTruffleString a, byte[] arrayA, int rawIndex, Encoding jCoding, ErrorHandling errorHandling) {
         int p = a.byteArrayOffset() + rawIndex;
         int end = a.byteArrayOffset() + a.length();
         int length = getCodePointLength(jCoding, arrayA, p, end);
         if (length < 1) {
-            return Encodings.invalidCodepoint();
+            return Encodings.invalidCodepointReturnValue(errorHandling);
         }
-        int codePoint = readCodePoint(jCoding, arrayA, p, end);
-        assert codePoint >= 0;
-        return codePoint;
+        return readCodePoint(jCoding, arrayA, p, end);
     }
 
     @Override
-    public long calcStringAttributes(Node location, Object array, int offset, int length, int encoding, ConditionProfile validCharacterProfile, ConditionProfile fixedWidthProfile) {
+    public long calcStringAttributes(Node location, Object array, int offset, int length, TruffleString.Encoding encoding, ConditionProfile validCharacterProfile, ConditionProfile fixedWidthProfile) {
         if (TStringGuards.is7BitCompatible(encoding) && TStringOps.calcStringAttributesLatin1(location, array, offset, length) == TSCodeRange.get7Bit()) {
             return StringAttributes.create(length, TSCodeRange.get7Bit());
         }
@@ -267,17 +266,18 @@ final class JCodingsImpl implements JCodings {
     private static final byte[] CONVERSION_REPLACEMENT_UTF_32 = TStringGuards.littleEndian() ? new byte[]{(byte) 0xFD, (byte) 0xFF, 0, 0} : new byte[]{0, 0, (byte) 0xFF, (byte) 0xFD};
 
     @Override
-    public TruffleString transcode(Node location, AbstractTruffleString a, Object arrayA, int codePointLengthA, int targetEncoding,
-                    ConditionProfile outOfMemoryProfile,
+    public TruffleString transcode(Node location, AbstractTruffleString a, Object arrayA, int codePointLengthA, TruffleString.Encoding targetEncoding,
+                    BranchProfile outOfMemoryProfile,
                     ConditionProfile nativeProfile,
                     TStringInternalNodes.FromBufferWithStringCompactionNode fromBufferWithStringCompactionNode) {
+        final TruffleString.Encoding encoding = TruffleString.Encoding.get(a.encoding());
         final JCodings.Encoding jCodingSrc;
-        if (isUTF16Or32(a) && isStride0(a)) {
-            jCodingSrc = TruffleString.Encoding.ISO_8859_1.getJCoding();
-        } else if (isUTF32(a) && isStride1(a)) {
-            jCodingSrc = TruffleString.Encoding.UTF_16.getJCoding();
+        if (isUTF16Or32(encoding) && isStride0(a)) {
+            jCodingSrc = TruffleString.Encoding.ISO_8859_1.jCoding;
+        } else if (isUTF32(encoding) && isStride1(a)) {
+            jCodingSrc = TruffleString.Encoding.UTF_16.jCoding;
         } else {
-            jCodingSrc = JCodings.getInstance().get(a.encoding());
+            jCodingSrc = JCodings.getInstance().get(encoding);
         }
         JCodings.Encoding jCodingDst = JCodings.getInstance().get(targetEncoding);
         byte[] buffer = new byte[(int) Math.min(TStringConstants.MAX_ARRAY_SIZE, ((long) codePointLengthA) * JCodings.getInstance().maxLength(jCodingDst))];
@@ -319,7 +319,8 @@ final class JCodingsImpl implements JCodings {
                     undefinedConversion = true;
                     econvSetReplacement(jCodingDst, econv, replacement);
                 } else if (result.isDestinationBufferFull()) {
-                    if (outOfMemoryProfile.profile(buffer.length == TStringConstants.MAX_ARRAY_SIZE)) {
+                    if (buffer.length == TStringConstants.MAX_ARRAY_SIZE) {
+                        outOfMemoryProfile.enter();
                         throw InternalErrors.outOfMemory();
                     }
                     buffer = Arrays.copyOf(buffer, (int) Math.min(TStringConstants.MAX_ARRAY_SIZE, ((long) buffer.length) << 1));
@@ -332,7 +333,7 @@ final class JCodingsImpl implements JCodings {
         }
         checkArrayRange(buffer, 0, length);
         return fromBufferWithStringCompactionNode.execute(
-                        buffer, 0, length, targetEncoding, length != buffer.length || isSupportedEncoding(targetEncoding), undefinedConversion || a.isMutable());
+                        buffer, 0, length, targetEncoding, length != buffer.length || targetEncoding.isSupported(), undefinedConversion || a.isMutable());
     }
 
     @TruffleBoundary

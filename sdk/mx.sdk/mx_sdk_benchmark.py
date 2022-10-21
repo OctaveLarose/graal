@@ -1,5 +1,5 @@
 #
-# Copyright (c) 2019, 2021, Oracle and/or its affiliates. All rights reserved.
+# Copyright (c) 2019, 2022, Oracle and/or its affiliates. All rights reserved.
 # DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
 #
 # The Universal Permissive License (UPL), Version 1.0
@@ -244,6 +244,13 @@ class NativeImageBenchmarkMixin(object):
             return parsed_args[0]
         else:
             return None
+
+    def image_build_stats_file(self, bm_config, args):
+        parsed_arg = parse_prefixed_arg('-Dnative-image.benchmark.image-build-stats-file=', args, 'Image build stats file should be specified once')
+        if parsed_arg:
+            return parsed_arg
+        else:
+            return os.path.join(bm_config.output_dir, bm_config.executable_name + '-image-build-stats.json')
 
     def pgo_iteration_num(self, _, args):
         parsed_args = parse_prefixed_args('-Dnative-image.benchmark.pgo-iteration-num=', args)

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2016, 2021, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2016, 2022, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * The Universal Permissive License (UPL), Version 1.0
@@ -46,7 +46,6 @@ import com.oracle.truffle.api.frame.FrameDescriptor;
 import com.oracle.truffle.api.frame.FrameSlotTypeException;
 import com.oracle.truffle.api.frame.MaterializedFrame;
 
-@SuppressWarnings("deprecation")
 class ReadOnlyFrame implements Frame {
     private final Frame delegate;
 
@@ -66,151 +65,13 @@ class ReadOnlyFrame implements Frame {
         return delegate.getArguments().clone();
     }
 
-    @Override
-    @TruffleBoundary
-    public Object getObject(com.oracle.truffle.api.frame.FrameSlot slot) throws FrameSlotTypeException {
-        return delegate.getObject(slot);
-    }
-
-    @Override
-    @TruffleBoundary
-    public void setObject(com.oracle.truffle.api.frame.FrameSlot slot, Object value) {
-        throw newReadonlyAssertionError();
-    }
-
-    @Override
-    @TruffleBoundary
-    public byte getByte(com.oracle.truffle.api.frame.FrameSlot slot) throws FrameSlotTypeException {
-        return delegate.getByte(slot);
-    }
-
-    @Override
-    @TruffleBoundary
-    public void setByte(com.oracle.truffle.api.frame.FrameSlot slot, byte value) {
-        throw newReadonlyAssertionError();
-    }
-
-    @Override
-    @TruffleBoundary
-    public boolean getBoolean(com.oracle.truffle.api.frame.FrameSlot slot) throws FrameSlotTypeException {
-        return delegate.getBoolean(slot);
-    }
-
-    @Override
-    @TruffleBoundary
-    public void setBoolean(com.oracle.truffle.api.frame.FrameSlot slot, boolean value) {
-        throw newReadonlyAssertionError();
-    }
-
-    @Override
-    @TruffleBoundary
-    public int getInt(com.oracle.truffle.api.frame.FrameSlot slot) throws FrameSlotTypeException {
-        return delegate.getInt(slot);
-    }
-
-    @Override
-    @TruffleBoundary
-    public void setInt(com.oracle.truffle.api.frame.FrameSlot slot, int value) {
-        throw newReadonlyAssertionError();
-    }
-
     private static AssertionError newReadonlyAssertionError() {
         return new AssertionError("Unexpected write access.");
     }
 
     @Override
     @TruffleBoundary
-    public long getLong(com.oracle.truffle.api.frame.FrameSlot slot) throws FrameSlotTypeException {
-        return delegate.getLong(slot);
-    }
-
-    @Override
-    @TruffleBoundary
-    public void setLong(com.oracle.truffle.api.frame.FrameSlot slot, long value) {
-        throw newReadonlyAssertionError();
-    }
-
-    @Override
-    @TruffleBoundary
-    public float getFloat(com.oracle.truffle.api.frame.FrameSlot slot) throws FrameSlotTypeException {
-        return delegate.getFloat(slot);
-    }
-
-    @Override
-    @TruffleBoundary
-    public void setFloat(com.oracle.truffle.api.frame.FrameSlot slot, float value) {
-        throw newReadonlyAssertionError();
-    }
-
-    @Override
-    @TruffleBoundary
-    public double getDouble(com.oracle.truffle.api.frame.FrameSlot slot) throws FrameSlotTypeException {
-        return delegate.getDouble(slot);
-    }
-
-    @Override
-    @TruffleBoundary
-    public void setDouble(com.oracle.truffle.api.frame.FrameSlot slot, double value) {
-        throw newReadonlyAssertionError();
-    }
-
-    @Override
-    @TruffleBoundary
-    public Object getValue(com.oracle.truffle.api.frame.FrameSlot slot) {
-        return delegate.getValue(slot);
-    }
-
-    @Override
-    @TruffleBoundary
     public MaterializedFrame materialize() {
-        throw newReadonlyAssertionError();
-    }
-
-    @Override
-    @TruffleBoundary
-    public boolean isObject(com.oracle.truffle.api.frame.FrameSlot slot) {
-        return delegate.isObject(slot);
-    }
-
-    @Override
-    @TruffleBoundary
-    public boolean isByte(com.oracle.truffle.api.frame.FrameSlot slot) {
-        return delegate.isByte(slot);
-    }
-
-    @Override
-    @TruffleBoundary
-    public boolean isBoolean(com.oracle.truffle.api.frame.FrameSlot slot) {
-        return delegate.isBoolean(slot);
-    }
-
-    @Override
-    @TruffleBoundary
-    public boolean isInt(com.oracle.truffle.api.frame.FrameSlot slot) {
-        return delegate.isInt(slot);
-    }
-
-    @Override
-    @TruffleBoundary
-    public boolean isLong(com.oracle.truffle.api.frame.FrameSlot slot) {
-        return delegate.isLong(slot);
-    }
-
-    @Override
-    @TruffleBoundary
-    public boolean isFloat(com.oracle.truffle.api.frame.FrameSlot slot) {
-        return delegate.isFloat(slot);
-    }
-
-    @Override
-    @TruffleBoundary
-    public boolean isDouble(com.oracle.truffle.api.frame.FrameSlot slot) {
-        return delegate.isDouble(slot);
-    }
-
-    @Override
-    @TruffleBoundary
-    public void clear(com.oracle.truffle.api.frame.FrameSlot slot) {
         throw newReadonlyAssertionError();
     }
 
@@ -480,6 +341,30 @@ class ReadOnlyFrame implements Frame {
 
     @Override
     @TruffleBoundary
+    public void copyStatic(int srcSlot, int destSlot) {
+        delegate.copyStatic(srcSlot, destSlot);
+    }
+
+    @Override
+    @TruffleBoundary
+    public void swapPrimitiveStatic(int first, int second) {
+        delegate.swapPrimitiveStatic(first, second);
+    }
+
+    @Override
+    @TruffleBoundary
+    public void swapObjectStatic(int first, int second) {
+        delegate.swapObjectStatic(first, second);
+    }
+
+    @Override
+    @TruffleBoundary
+    public void swapStatic(int first, int second) {
+        delegate.swapStatic(first, second);
+    }
+
+    @Override
+    @TruffleBoundary
     public void clearPrimitiveStatic(int slot) {
         delegate.clearPrimitiveStatic(slot);
     }
@@ -488,5 +373,11 @@ class ReadOnlyFrame implements Frame {
     @TruffleBoundary
     public void clearObjectStatic(int slot) {
         delegate.clearObjectStatic(slot);
+    }
+
+    @Override
+    @TruffleBoundary
+    public void clearStatic(int slot) {
+        delegate.clearStatic(slot);
     }
 }

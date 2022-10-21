@@ -90,9 +90,7 @@ import com.oracle.truffle.espresso.meta.JavaKind;
 import com.oracle.truffle.espresso.meta.Meta;
 import com.oracle.truffle.espresso.meta.MetaUtil;
 import com.oracle.truffle.espresso.meta.ModifiersProvider;
-import com.oracle.truffle.espresso.nodes.BytecodeNode;
 import com.oracle.truffle.espresso.nodes.EspressoRootNode;
-import com.oracle.truffle.espresso.nodes.NativeMethodNode;
 import com.oracle.truffle.espresso.nodes.interop.AbstractLookupNode;
 import com.oracle.truffle.espresso.nodes.methodhandle.MethodHandleIntrinsicNode;
 import com.oracle.truffle.espresso.runtime.Attribute;
@@ -342,7 +340,7 @@ public final class Method extends Member<Signature> implements TruffleObject, Co
                 // Look in libjava
                 TruffleObject nativeMethod = lookupAndBind(getVM().getJavaLibrary(), mangledName);
                 if (nativeMethod != null) {
-                    return EspressoRootNode.create(null, new NativeMethodNode(nativeMethod, getMethodVersion())).getCallTarget();
+                    return EspressoRootNode.createNative(getMethodVersion(), nativeMethod).getCallTarget();
                 }
             }
         }
@@ -355,7 +353,7 @@ public final class Method extends Member<Signature> implements TruffleObject, Co
             String mangledName = Mangle.mangleMethod(this, withSignature);
             TruffleObject nativeMethod = getContext().bindToAgent(this, mangledName);
             if (nativeMethod != null) {
-                return EspressoRootNode.create(null, new NativeMethodNode(nativeMethod, getMethodVersion())).getCallTarget();
+                return EspressoRootNode.createNative(getMethodVersion(), nativeMethod).getCallTarget();
             }
         }
         return null;
@@ -381,7 +379,7 @@ public final class Method extends Member<Signature> implements TruffleObject, Co
         }
         TruffleObject symbol = getVM().getFunction(handle);
         TruffleObject nativeMethod = bind(symbol);
-        return EspressoRootNode.create(null, new NativeMethodNode(nativeMethod, this.getMethodVersion())).getCallTarget();
+        return EspressoRootNode.createNative(this.getMethodVersion(), nativeMethod).getCallTarget();
     }
 
     public boolean isConstructor() {
@@ -794,8 +792,7 @@ public final class Method extends Member<Signature> implements TruffleObject, Co
 
     public Method forceSplit() {
         Method result = new Method(this, getCodeAttribute());
-        BytecodeNode bytecodeNode = new BytecodeNode(result.getMethodVersion());
-        EspressoRootNode root = EspressoRootNode.create(bytecodeNode.getFrameDescriptor(), bytecodeNode);
+        EspressoRootNode root = EspressoRootNode.createForBytecodes(result.getMethodVersion());
         result.getMethodVersion().callTarget = root.getCallTarget();
         return result;
     }
@@ -1196,38 +1193,45 @@ public final class Method extends Member<Signature> implements TruffleObject, Co
         }
 
         public CallTarget getCallTarget() {
-            if (callTarget == null) {
-                CompilerDirectives.transferToInterpreterAndInvalidate();
-                Meta meta = getMeta();
-                checkPoisonPill(meta);
-                synchronized (this) {
-                    if (callTarget != null) {
-                        return callTarget;
-                    }
-                    if (proxy != null) {
-                        this.callTarget = proxy.getCallTarget();
-                        return callTarget;
-                    }
-
-                    /*
-                     * The substitution factory does the validation e.g. some substitutions only
-                     * apply for classes/methods in the boot or platform class loaders. A warning is
-                     * logged is the validation fails.
-                     */
-                    EspressoRootNode redirectedMethod = getSubstitutions().get(getMethod());
-                    if (redirectedMethod != null) {
-                        callTarget = redirectedMethod.getCallTarget();
-                        return callTarget;
-                    }
-
-                    CallTarget target = findCallTarget();
-                    if (target != null) {
-                        callTarget = target;
-                        return callTarget;
-                    }
+            if (CompilerDirectives.injectBranchProbability(CompilerDirectives.SLOWPATH_PROBABILITY, callTarget == null)) {
+                if (CompilerDirectives.isCompilationConstant(this)) {
+                    CompilerDirectives.transferToInterpreterAndInvalidate();
                 }
+                resolveCallTarget();
             }
             return callTarget;
+        }
+
+        @TruffleBoundary
+        private void resolveCallTarget() {
+            Meta meta = getMeta();
+            checkPoisonPill(meta);
+            synchronized (this) {
+                if (callTarget != null) {
+                    return;
+                }
+                if (proxy != null) {
+                    this.callTarget = proxy.getCallTarget();
+                    return;
+                }
+
+                /*
+                 * The substitution factory does the validation e.g. some substitutions only apply
+                 * for classes/methods in the boot or platform class loaders. A warning is logged is
+                 * the validation fails.
+                 */
+                EspressoRootNode redirectedMethod = getSubstitutions().get(getMethod());
+                if (redirectedMethod != null) {
+                    callTarget = redirectedMethod.getCallTarget();
+                    return;
+                }
+
+                CallTarget target = findCallTarget();
+                if (target != null) {
+                    callTarget = target;
+                    return;
+                }
+            }
         }
 
         private CallTarget findCallTarget() {
@@ -1268,8 +1272,7 @@ public final class Method extends Member<Signature> implements TruffleObject, Co
                     throw meta.throwExceptionWithMessage(meta.java_lang_AbstractMethodError,
                                     "Calling abstract method: " + getMethod().getDeclaringKlass().getType() + "." + getName() + " -> " + getRawSignature());
                 }
-                BytecodeNode bytecodeNode = new BytecodeNode(this);
-                EspressoRootNode rootNode = EspressoRootNode.create(bytecodeNode.getFrameDescriptor(), bytecodeNode);
+                EspressoRootNode rootNode = EspressoRootNode.createForBytecodes(this);
                 target = rootNode.getCallTarget();
             }
             return target;

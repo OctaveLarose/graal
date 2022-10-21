@@ -2,6 +2,59 @@
 
 This changelog summarizes major changes between Truffle versions relevant to languages implementors building upon the Truffle framework. The main focus is on APIs exported by Truffle.
 
+## Version 22.3.0
+
+* GR-40069 Added additional methods to the static frame API.
+  * Added `copyStatic` to copy a static slot in cases where the underlying type is not known.
+  * Added `clearStatic` to clear a static slot in cases where the underlying type is not known.
+  * Added `swap...Static` to swap slots of known (primitive or object) or unknown underlying type.
+* GR-40103 Potentially breaking: Static frame access is now validated when assertions are enabled. Reading a slot with a different type than written to leads to an `AssertionError`.
+* GR-40163 Deprecated `TruffleLanguage.Env.newContextBuilder()` and replaced it with a new method `TruffleLanguage.Env.newInnerContextBuilder(String...)`. The new method does no longer inherit all privileges from the parent context and does no longer initialize the creator context by default. The new method also allows to set the permitted languages for the inner context similarly as in the polyglot embedding API. 
+* GR-40163 Changed behavior: Inner contexts do no longer inherit application arguments from the outer context. It is now possible to set application arguments explicitly for inner contexts using `TruffleContext.Builder.arguments(String, String[])`.
+* GR-40163 Changed behavior: Inner contexts do no longer use system exit on exit even if the polyglot embedder specified it with `Context.Builder.useSystemExit(boolean)` for the outer context.
+* GR-40163 Added new capabilities to `TruffleContext`:
+	* Added `TruffleContext.Builder.out(OutputStream)`, `TruffleContext.Builder.err(OutputStream)` and `TruffleContext.Builder.in(InputStream)` to customize streams for inner contexts. 
+	* GR-35358 Added `TruffleContext.Builder.forceSharing(Boolean)` to force or deny code sharing for inner contexts.
+	* GR-36927 Added `TruffleContext.Builder.option(String, String)` to override language options for inner contexts. This is currently only supported if all access privileges have been granted by the embedder.
+	* Added `TruffleContext.Builder.inheritAllAccess(boolean)` which allows to enable access privilege inheritance from the outer context. By default this flag is `false`. 
+	* Access privileges can now be individually granted or denied. Note that an inner context still cannot use any of the privileges that have not been granted to the outer context. For example, if the outer context has no access to IO then the inner context won't have access to IO even if the privilege is set for the inner context. The following new methods were added to configure privileges for inner contexts:
+		* `TruffleContext.Builder.allowCreateThreads(boolean)` 
+		* `TruffleContext.Builder.allowNativeAccess(boolean)` 
+		* `TruffleContext.Builder.allowIO(boolean)` 
+		* `TruffleContext.Builder.allowHostClassLoading(boolean)` 
+		* `TruffleContext.Builder.allowHostLookup(boolean)` 
+		* `TruffleContext.Builder.allowCreateProcess(boolean)` 
+		* `TruffleContext.Builder.allowPolyglotAccess(boolean)` 
+		* `TruffleContext.Builder.allowInheritEnvironmentAccess(boolean)` 
+		* `TruffleContext.Builder.allowInnerContextOptions(boolean)` 
+* GR-40163 Added `TruffleContext.initializePublic(Node, String)` and `TruffleContext.initializeInternal(Node, String)` to initialize a public or internal language of an inner context.
+* GR-39354 TruffleStrings: added ErrorHandling parameter to CreateForwardIteratorNode and CreateBackwardIteratorNode.
+* GR-40062 `String.indexOf` methods are no longer considered PE safe and using them will now fail the native-image block list check. Use `TruffleString` instead or put them behind a `@TruffleBoundary`.
+* GR-39354 TruffleStrings: added ErrorHandling parameter to ByteLengthOfCodePointNode, CodePointAtIndexNode and CodePointAtByteIndexNode.
+* GR-39219 Removed several deprecated APIs:
+    * Removed deprecated `FrameSlot` API. The API was deprecated in 22.0.
+    * Removed deprecated `CompilerOptions` API. The API was deprecated in 22.1.
+    * Removed deprecated `TruffleRuntime.createCallTarget` and `RootNode.setCallTarget` API. The API was deprecated in 22.0.
+    * Removed deprecated `TruffleContext.enter` and `TruffleContext.leave` API. The API was deprecated in 20.3.
+    * Removed deprecated `MemoryFence` API. The API was deprecated in 22.1.
+    * Removed deprecated `TruffleRuntime.getCallerFrame` and `TruffleRuntime.getCurrentFrame` API. The API was deprecated in 22.1.
+    * Removed deprecated `@CachedContext` and `@CachedLibrary` API. The API was deprecated in 21.3.
+    * Removed deprecated `get()` method from `LanguageContext` and `ContextReference` API. The API was deprecated in 21.3.
+    * Removed deprecated equality `ValueProfile` . The API was deprecated in 21.2.
+    * Removed deprecated `UnionAssumption`, `AlwaysValidAssumption` and `NeverValidAssumption`. The API was deprecated in 22.1.
+* GR-35797 The [SnippetRun#getException()](https://www.graalvm.org/truffle/javadoc/org/graalvm/polyglot/tck/ResultVerifier.SnippetRun.html#getException--) now provides an `IllegalArgumentException` thrown during the snippet execution. The `IllegalArgumentException` is converted to a `PolyglotException` before it is returned.
+* Added the `@HostCompilerDirectives.InliningCutoff` annotation that allows to manually tune inlining decisions for host inlining.
+* Tuned host inlining heuristic for reduced code size. A new host inlining tuning guide is available in the [docs](https://github.com/oracle/graal/blob/master/truffle/docs/HostCompilation.md#host-inlining)
+* GR-35007 (EE-only) The Truffle sandboxing CPU time limits (`sandbox.MaxCPUTime`) are also supported on the native image.
+* GR-24927 The Truffle annotation processor now emits an error for methods annotated by a `@TruffleBoundary` annotation and a `Frame` parameter. Previously, the processor only reported an error for `VirtualFrame` parameters. To resolve this, either change the parameter to a `MaterializedFrame` , remove the parameter or remove the `@TruffleBoundary`.
+* GR-24927 Truffle DSL now automatically materalizes frames when a `Frame` parameter is used in an uncached instance of a `@Specialization`. For example, if it rewrites itself to an uncached version due to the usage of a `@CachedLibrary`.
+* GR-35007 (EE-only) The Truffle sandboxing CPU time limits (`sandbox.MaxCPUTime`) are also supported on the native image.
+* GR-28705 Added `TruffleInstrument.Env#createSystemThread` to create a new thread designed to process instrument tasks in the background.
+* GR-28705 Added `TruffleLanguage.Env#createSystemThread` to create a new thread designed to process language internal tasks in the background.
+* GR-31304 `Debugger.disableStepping()` and `Debugger.restoreStepping()` added to disable/restore stepping on a dedicated thread on a specific code path.
+* GR-39415 Experimental options are on by default in the TCK test Context. Added `LanguageProviders.additionalOptions()` which allows TCK providers to set their language's options in the test context (Attempts to set other languages' options will result in an `IllegalArgumentException` while creation the context).
+* GR-38163 Introduced [RootNode.getParentFrameDescriptor](https://www.graalvm.org/truffle/javadoc/com/oracle/truffle/api/nodes/RootNode.html#getParentFrameDescriptor) to support identifying lexical scope parents of hot methods and compiling them earlier.
+
 ## Version 22.2.0
 
 * GR-33829 Added support on libgraal for caching encoded graphs across Truffle compilations to speedup partial evaluation. The cache is enabled by default and can be enabled/disabled with the `--engine.EncodedGraphCache` option.
@@ -12,7 +65,7 @@ This changelog summarizes major changes between Truffle versions relevant to lan
 * GR-37493 Removed long time deprecated API `NodeFieldAccessor` without replacement. Added a some utility methods in `NodeUtil` as a replacement for this API: `NodeUtil.collectFieldNames(Class)`, `NodeUtil.collectNodeChildren(Node)` and `NodeUtil.collectNodeProperties(Node)`.
 * GR-37100 Deprecated `BytecodeOSRNode.copyIntoOSRFrame(VirtualFrame, VirtualFrame, int)`, in favor of `BytecodeOSRNode.copyIntoOSRFrame(VirtualFrame, VirtualFrame, int, Object)`.
 * GR-36944 Added new static APIs to `com.oracle.truffle.api.frame.Frame`:
-    * Added new `Static` option to `com.oracle.truffle.api.frame.FrameSlotKind` for index-based slots. Frame slots using this kind cannot be changed to another kind later on. Static frame slots can simultaneously hold one primitive and one object value.
+    * Added new `Static` option to `com.oracle.truffle.api.frame.FrameSlotKind` for index-based slots. Frame slots using this kind cannot be changed to another kind later on. Static frame slots can only hold either a primitive or an `Object` value, never both at the same time.
     * Added new `get.../set...` methods postfixed by `Static` for exclusively accessing static frame slots.
     * Added new `copy.../clear...` methods postfixed by `Static` for exclusively copying and clearing static frame slots.
     * Static frame slots are intended for situations where the type of a variable in a frame slots is known ahead of time and does not need any type checks (e.g. in statically typed languages).
@@ -26,7 +79,6 @@ This changelog summarizes major changes between Truffle versions relevant to lan
 * GR-38387 Deterministic and declaration order of `InteropLibrary.getMembers()` is now required.
 * GR-38110 Added option to use `long` values as offsets for accessing memory through `ByteArraySupport`.
 * GR-39029 Fixed issue in `InteropLibrary` that required `asDate` to be implemented whenever `isTime` is exported; correct dependency is on `isDate`.
-* GR-38387 Updated the `InteropLibrary.getMembers()` message regarding ordering and determinism. 
 * GR-38945 Truffle IGV dumping with log level 5 (e.g. `-Dgraal.Dump=Truffle:5`) now dumps the graph after each method that was fully partially evaluated. This enables debugging of problems only visible during partial evaluation.
 * GR-34894 Removed deprecated `DynamicObject` APIs:
     * `Shape`: `getKeyList(Pred)`, `getPropertyList(Pred)`, `Pred`, `getObjectType`, `getId`, `isRelated`, `createSeparateShape`, `append`, `reservePrimitiveExtensionArray`, `hasTransitionWithKey`

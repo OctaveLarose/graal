@@ -46,14 +46,13 @@ import com.oracle.truffle.regex.charset.CharMatchers;
 import com.oracle.truffle.regex.charset.CodePointSet;
 import com.oracle.truffle.regex.charset.Constants;
 import com.oracle.truffle.regex.tregex.buffer.CompilationBuffer;
-import com.oracle.truffle.regex.tregex.nodes.dfa.DFAStateNode;
-import com.oracle.truffle.regex.tregex.nodes.dfa.DFAStateNode.LoopOptIndexOfAnyByteNode;
-import com.oracle.truffle.regex.tregex.nodes.dfa.DFAStateNode.LoopOptIndexOfAnyCharNode;
-import com.oracle.truffle.regex.tregex.nodes.dfa.DFAStateNode.LoopOptIndexOfAnyIntNode;
-import com.oracle.truffle.regex.tregex.nodes.dfa.DFAStateNode.LoopOptIndexOfStringNode;
-import com.oracle.truffle.regex.tregex.nodes.dfa.DFAStateNode.LoopOptimizationNode;
-import com.oracle.truffle.regex.tregex.nodes.dfa.Matchers;
-import com.oracle.truffle.regex.tregex.nodes.dfa.Matchers.Builder;
+import com.oracle.truffle.regex.tregex.nodes.dfa.DFAStateNode.IndexOfAnyByteCall;
+import com.oracle.truffle.regex.tregex.nodes.dfa.DFAStateNode.IndexOfAnyCharCall;
+import com.oracle.truffle.regex.tregex.nodes.dfa.DFAStateNode.IndexOfAnyIntCall;
+import com.oracle.truffle.regex.tregex.nodes.dfa.DFAStateNode.IndexOfCall;
+import com.oracle.truffle.regex.tregex.nodes.dfa.DFAStateNode.IndexOfStringCall;
+import com.oracle.truffle.regex.tregex.nodes.dfa.SequentialMatchers;
+import com.oracle.truffle.regex.tregex.nodes.dfa.SequentialMatchers.Builder;
 
 public final class Encodings {
 
@@ -63,7 +62,8 @@ public final class Encodings {
     public static final Encoding UTF_16 = new Encoding.UTF16();
     public static final Encoding UTF_32 = new Encoding.UTF32();
     public static final Encoding UTF_16_RAW = new Encoding.UTF16Raw();
-    public static final Encoding LATIN_1 = new Encoding.Latin1();
+    public static final Encoding LATIN_1 = new Encoding.Latin1(TruffleString.Encoding.ISO_8859_1);
+    public static final Encoding BYTES = new Encoding.Latin1(TruffleString.Encoding.BYTES);
     public static final Encoding ASCII = new Encoding.Ascii();
 
     public static final String[] ALL_NAMES = {UTF_8.getName(), UTF_16.getName(), UTF_16_RAW.getName(), UTF_32.getName(), ASCII.getName(), LATIN_1.getName(), "BYTES"};
@@ -79,6 +79,7 @@ public final class Encodings {
             case "UTF-16-RAW":
                 return UTF_16_RAW;
             case "BYTES":
+                return BYTES;
             case "LATIN-1":
                 return LATIN_1;
             default:
@@ -113,17 +114,17 @@ public final class Encodings {
 
         public abstract AbstractStringBuffer createStringBuffer(int capacity);
 
-        public abstract DFAStateNode.LoopOptimizationNode extractLoopOptNode(CodePointSet loopCPS);
+        public abstract IndexOfCall extractIndexOfCall(CodePointSet loopCPS);
 
         public abstract int getNumberOfCodeRanges();
 
-        public Matchers.Builder createMatchersBuilder() {
-            return new Matchers.Builder(getNumberOfCodeRanges());
+        public SequentialMatchers.Builder createMatchersBuilder() {
+            return new SequentialMatchers.Builder(getNumberOfCodeRanges());
         }
 
         public abstract void createMatcher(Builder matchersBuilder, int i, CodePointSet cps, CompilationBuffer compilationBuffer);
 
-        public abstract Matchers toMatchers(Builder matchersBuilder);
+        public abstract SequentialMatchers toMatchers(Builder matchersBuilder);
 
         public static final class UTF32 extends Encoding {
 
@@ -176,8 +177,8 @@ public final class Encodings {
             }
 
             @Override
-            public LoopOptimizationNode extractLoopOptNode(CodePointSet cps) {
-                return new LoopOptIndexOfAnyIntNode(cps.inverseToIntArray(this));
+            public IndexOfCall extractIndexOfCall(CodePointSet cps) {
+                return new IndexOfAnyIntCall(cps.inverseToIntArray(this));
             }
 
             @Override
@@ -192,9 +193,9 @@ public final class Encodings {
             }
 
             @Override
-            public Matchers toMatchers(Builder matchersBuilder) {
-                return new Matchers.UTF16Or32Matchers(matchersBuilder.materialize(0), matchersBuilder.materialize(1), matchersBuilder.materialize(2), matchersBuilder.materialize(3),
-                                matchersBuilder.getNoMatchSuccessor());
+            public SequentialMatchers toMatchers(Builder matchersBuilder) {
+                return new SequentialMatchers.UTF16Or32SequentialMatchers(matchersBuilder.materialize(0), matchersBuilder.materialize(1), matchersBuilder.materialize(2),
+                                matchersBuilder.materialize(3), matchersBuilder.getNoMatchSuccessor());
             }
         }
 
@@ -262,7 +263,7 @@ public final class Encodings {
             }
 
             @Override
-            public LoopOptimizationNode extractLoopOptNode(CodePointSet cps) {
+            public IndexOfCall extractIndexOfCall(CodePointSet cps) {
                 if (cps.inverseGetMax(this) <= 0xffff) {
                     char[] indexOfChars = cps.inverseToCharArray(this);
                     for (char c : indexOfChars) {
@@ -270,11 +271,11 @@ public final class Encodings {
                             return null;
                         }
                     }
-                    return new LoopOptIndexOfAnyCharNode(indexOfChars);
+                    return new IndexOfAnyCharCall(indexOfChars);
                 } else if (cps.inverseValueCount(this) == 1) {
                     StringBufferUTF16 sb = createStringBuffer(2);
                     sb.append(cps.inverseGetMin(this));
-                    return new LoopOptIndexOfStringNode(sb.materialize(), null);
+                    return new IndexOfStringCall(sb.materialize(), null);
                 } else {
                     return null;
                 }
@@ -315,9 +316,9 @@ public final class Encodings {
             }
 
             @Override
-            public Matchers toMatchers(Builder matchersBuilder) {
-                return new Matchers.UTF16Or32Matchers(matchersBuilder.materialize(0), matchersBuilder.materialize(1), matchersBuilder.materialize(2), matchersBuilder.materialize(3),
-                                matchersBuilder.getNoMatchSuccessor());
+            public SequentialMatchers toMatchers(Builder matchersBuilder) {
+                return new SequentialMatchers.UTF16Or32SequentialMatchers(matchersBuilder.materialize(0), matchersBuilder.materialize(1), matchersBuilder.materialize(2),
+                                matchersBuilder.materialize(3), matchersBuilder.getNoMatchSuccessor());
             }
         }
 
@@ -374,8 +375,8 @@ public final class Encodings {
             }
 
             @Override
-            public LoopOptimizationNode extractLoopOptNode(CodePointSet cps) {
-                return new LoopOptIndexOfAnyCharNode(cps.inverseToCharArray(this));
+            public IndexOfCall extractIndexOfCall(CodePointSet cps) {
+                return new IndexOfAnyCharCall(cps.inverseToCharArray(this));
             }
 
             @Override
@@ -390,8 +391,9 @@ public final class Encodings {
             }
 
             @Override
-            public Matchers toMatchers(Builder matchersBuilder) {
-                return new Matchers.UTF16RawMatchers(matchersBuilder.materialize(0), matchersBuilder.materialize(1), matchersBuilder.materialize(2), matchersBuilder.getNoMatchSuccessor());
+            public SequentialMatchers toMatchers(Builder matchersBuilder) {
+                return new SequentialMatchers.UTF16RawSequentialMatchers(matchersBuilder.materialize(0), matchersBuilder.materialize(1), matchersBuilder.materialize(2),
+                                matchersBuilder.getNoMatchSuccessor());
             }
         }
 
@@ -463,14 +465,14 @@ public final class Encodings {
             }
 
             @Override
-            public LoopOptimizationNode extractLoopOptNode(CodePointSet cps) {
+            public IndexOfCall extractIndexOfCall(CodePointSet cps) {
                 if (cps.inverseGetMax(this) <= 0x7f) {
                     byte[] indexOfChars = cps.inverseToByteArray(this);
-                    return new LoopOptIndexOfAnyByteNode(indexOfChars);
+                    return new IndexOfAnyByteCall(indexOfChars);
                 } else if (cps.inverseValueCount(this) == 1) {
                     StringBufferUTF8 sb = createStringBuffer(4);
                     sb.append(cps.inverseGetMin(this));
-                    return new LoopOptIndexOfStringNode(sb.materialize(), new StringUTF8(new byte[sb.length()]));
+                    return new IndexOfStringCall(sb.materialize(), new StringUTF8(new byte[sb.length()]));
                 } else {
                     return null;
                 }
@@ -488,15 +490,18 @@ public final class Encodings {
             }
 
             @Override
-            public Matchers toMatchers(Builder matchersBuilder) {
-                return new Matchers.UTF8Matchers(matchersBuilder.materialize(0), matchersBuilder.materialize(1), matchersBuilder.materialize(2), matchersBuilder.materialize(3),
+            public SequentialMatchers toMatchers(Builder matchersBuilder) {
+                return new SequentialMatchers.UTF8SequentialMatchers(matchersBuilder.materialize(0), matchersBuilder.materialize(1), matchersBuilder.materialize(2), matchersBuilder.materialize(3),
                                 matchersBuilder.getNoMatchSuccessor());
             }
         }
 
         public static final class Latin1 extends Encoding {
 
-            private Latin1() {
+            private TruffleString.Encoding tsEncoding;
+
+            private Latin1(TruffleString.Encoding tsEncoding) {
+                this.tsEncoding = tsEncoding;
             }
 
             @Override
@@ -506,7 +511,7 @@ public final class Encodings {
 
             @Override
             public TruffleString.Encoding getTStringEncoding() {
-                return TruffleString.Encoding.ISO_8859_1;
+                return tsEncoding;
             }
 
             @Override
@@ -536,12 +541,12 @@ public final class Encodings {
 
             @Override
             public StringBufferLATIN1 createStringBuffer(int capacity) {
-                return new StringBufferLATIN1(capacity);
+                return new StringBufferLATIN1(capacity, this);
             }
 
             @Override
-            public LoopOptimizationNode extractLoopOptNode(CodePointSet cps) {
-                return new LoopOptIndexOfAnyByteNode(cps.inverseToByteArray(this));
+            public IndexOfCall extractIndexOfCall(CodePointSet cps) {
+                return new IndexOfAnyByteCall(cps.inverseToByteArray(this));
             }
 
             @Override
@@ -555,8 +560,8 @@ public final class Encodings {
             }
 
             @Override
-            public Matchers toMatchers(Builder matchersBuilder) {
-                return new Matchers.SimpleMatchers(matchersBuilder.materialize(0), matchersBuilder.getNoMatchSuccessor());
+            public SequentialMatchers toMatchers(Builder matchersBuilder) {
+                return new SequentialMatchers.SimpleSequentialMatchers(matchersBuilder.materialize(0), matchersBuilder.getNoMatchSuccessor());
             }
         }
 
@@ -603,8 +608,8 @@ public final class Encodings {
             }
 
             @Override
-            public LoopOptimizationNode extractLoopOptNode(CodePointSet cps) {
-                return new LoopOptIndexOfAnyByteNode(cps.inverseToByteArray(this));
+            public IndexOfCall extractIndexOfCall(CodePointSet cps) {
+                return new IndexOfAnyByteCall(cps.inverseToByteArray(this));
             }
 
             @Override
@@ -618,8 +623,8 @@ public final class Encodings {
             }
 
             @Override
-            public Matchers toMatchers(Builder matchersBuilder) {
-                return new Matchers.SimpleMatchers(matchersBuilder.materialize(0), matchersBuilder.getNoMatchSuccessor());
+            public SequentialMatchers toMatchers(Builder matchersBuilder) {
+                return new SequentialMatchers.SimpleSequentialMatchers(matchersBuilder.materialize(0), matchersBuilder.getNoMatchSuccessor());
             }
         }
     }

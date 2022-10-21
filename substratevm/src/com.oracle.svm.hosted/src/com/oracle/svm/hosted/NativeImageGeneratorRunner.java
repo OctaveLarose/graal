@@ -271,7 +271,7 @@ public class NativeImageGeneratorRunner {
         OptionValues parsedHostedOptions = classLoader.classLoaderSupport.getParsedHostedOptions();
 
         String imageName = SubstrateOptions.Name.getValue(parsedHostedOptions);
-        TimerCollection timerCollection = new TimerCollection(imageName);
+        TimerCollection timerCollection = new TimerCollection();
         Timer totalTimer = timerCollection.get(TimerCollection.Registry.TOTAL);
 
         if (NativeImageOptions.ListCPUFeatures.getValue(parsedHostedOptions)) {
@@ -287,7 +287,7 @@ public class NativeImageGeneratorRunner {
         try (StopTimer ignored = totalTimer.start()) {
             Timer classlistTimer = timerCollection.get(TimerCollection.Registry.CLASSLIST);
             try (StopTimer ignored1 = classlistTimer.start()) {
-                classLoader.initAllClasses();
+                classLoader.loadAllClasses();
             }
 
             DebugContext debug = new DebugContext.Builder(parsedHostedOptions, new GraalDebugHandlersFactory(GraalAccess.getOriginalSnippetReflection())).build();
@@ -296,10 +296,6 @@ public class NativeImageGeneratorRunner {
                 throw UserError.abort("No output file name specified. Use '%s'.", SubstrateOptionsParser.commandArgument(SubstrateOptions.Name, "<output-file>"));
             }
             try {
-
-                // print the time here to avoid interactions with flags processing
-                classlistTimer.print();
-
                 Map<Method, CEntryPointData> entryPoints = new HashMap<>();
                 Pair<Method, CEntryPointData> mainEntryPointData = Pair.empty();
                 JavaMainSupport javaMainSupport = null;
@@ -331,7 +327,7 @@ public class NativeImageGeneratorRunner {
                     Method mainEntryPoint;
                     Class<?> mainClass;
                     try {
-                        Object mainModule = null;
+                        Module mainModule = null;
                         if (!moduleName.isEmpty()) {
                             mainModule = classLoader.findModule(moduleName)
                                             .orElseThrow(() -> UserError.abort("Module " + moduleName + " for mainclass not found."));
@@ -462,7 +458,6 @@ public class NativeImageGeneratorRunner {
             NativeImageGeneratorRunner.reportFatalError(e);
             return 1;
         } finally {
-            totalTimer.print();
             if (imageName != null && generator != null) {
                 reporter.printEpilog(imageName, generator, wasSuccessfulBuild, parsedHostedOptions);
             }

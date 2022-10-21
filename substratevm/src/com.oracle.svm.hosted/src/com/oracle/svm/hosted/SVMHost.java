@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2016, 2021, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2016, 2022, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -29,8 +29,11 @@ import java.lang.ref.Reference;
 import java.lang.ref.SoftReference;
 import java.lang.ref.WeakReference;
 import java.lang.reflect.AnnotatedElement;
+import java.lang.reflect.InvocationTargetException;
+import java.lang.reflect.Method;
 import java.lang.reflect.Modifier;
 import java.util.Collections;
+import java.util.Comparator;
 import java.util.EnumSet;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -43,6 +46,8 @@ import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.function.BiPredicate;
 
+import com.oracle.svm.core.jdk.InternalVMMethod;
+import com.oracle.svm.core.jdk.LambdaFormHiddenMethod;
 import org.graalvm.compiler.api.replacements.SnippetReflectionProvider;
 import org.graalvm.compiler.core.common.spi.ForeignCallDescriptor;
 import org.graalvm.compiler.core.common.spi.ForeignCallsProvider;
@@ -61,17 +66,17 @@ import org.graalvm.compiler.options.OptionValues;
 import org.graalvm.compiler.phases.OptimisticOptimizations;
 import org.graalvm.compiler.phases.common.BoxNodeIdentityPhase;
 import org.graalvm.compiler.phases.common.CanonicalizerPhase;
-import org.graalvm.compiler.serviceprovider.JavaVersionUtil;
 import org.graalvm.compiler.virtual.phases.ea.PartialEscapePhase;
+import org.graalvm.nativeimage.AnnotationAccess;
 import org.graalvm.nativeimage.Platform;
 import org.graalvm.nativeimage.Platforms;
 import org.graalvm.nativeimage.c.function.RelocatedPointer;
-import com.oracle.svm.util.GuardedAnnotationAccess;
 
 import com.oracle.graal.pointsto.BigBang;
 import com.oracle.graal.pointsto.api.HostVM;
 import com.oracle.graal.pointsto.constraints.UnsupportedFeatureException;
 import com.oracle.graal.pointsto.infrastructure.OriginalClassProvider;
+import com.oracle.graal.pointsto.infrastructure.UniverseMetaAccess;
 import com.oracle.graal.pointsto.meta.AnalysisField;
 import com.oracle.graal.pointsto.meta.AnalysisMethod;
 import com.oracle.graal.pointsto.meta.AnalysisType;
@@ -80,21 +85,22 @@ import com.oracle.graal.pointsto.meta.HostedProviders;
 import com.oracle.graal.pointsto.phases.InlineBeforeAnalysisPolicy;
 import com.oracle.graal.pointsto.util.GraalAccess;
 import com.oracle.svm.core.BuildPhaseProvider;
+import com.oracle.svm.core.NeverInline;
+import com.oracle.svm.core.NeverInlineTrivial;
 import com.oracle.svm.core.RuntimeAssertionsSupport;
 import com.oracle.svm.core.SubstrateOptions;
 import com.oracle.svm.core.SubstrateOptions.OptimizationLevel;
 import com.oracle.svm.core.SubstrateUtil;
-import com.oracle.svm.core.annotate.NeverInline;
-import com.oracle.svm.core.annotate.NeverInlineTrivial;
-import com.oracle.svm.core.annotate.UnknownClass;
-import com.oracle.svm.core.annotate.UnknownObjectField;
-import com.oracle.svm.core.annotate.UnknownPrimitiveField;
 import com.oracle.svm.core.classinitialization.EnsureClassInitializedNode;
 import com.oracle.svm.core.graal.meta.SubstrateForeignCallLinkage;
 import com.oracle.svm.core.graal.meta.SubstrateForeignCallsProvider;
 import com.oracle.svm.core.graal.stackvalue.StackValueNode;
 import com.oracle.svm.core.graal.thread.VMThreadLocalAccess;
+import com.oracle.svm.core.heap.StoredContinuation;
 import com.oracle.svm.core.heap.Target_java_lang_ref_Reference;
+import com.oracle.svm.core.heap.UnknownClass;
+import com.oracle.svm.core.heap.UnknownObjectField;
+import com.oracle.svm.core.heap.UnknownPrimitiveField;
 import com.oracle.svm.core.hub.DynamicHub;
 import com.oracle.svm.core.hub.HubType;
 import com.oracle.svm.core.hub.ReferenceType;
@@ -103,6 +109,7 @@ import com.oracle.svm.core.jdk.RecordSupport;
 import com.oracle.svm.core.jdk.SealedClassSupport;
 import com.oracle.svm.core.option.HostedOptionKey;
 import com.oracle.svm.core.option.SubstrateOptionsParser;
+import com.oracle.svm.core.thread.Continuation;
 import com.oracle.svm.core.util.HostedStringDeduplication;
 import com.oracle.svm.core.util.VMError;
 import com.oracle.svm.hosted.classinitialization.ClassInitializationSupport;
@@ -110,12 +117,15 @@ import com.oracle.svm.hosted.code.InliningUtilities;
 import com.oracle.svm.hosted.code.UninterruptibleAnnotationChecker;
 import com.oracle.svm.hosted.heap.PodSupport;
 import com.oracle.svm.hosted.meta.HostedType;
+import com.oracle.svm.hosted.meta.HostedUniverse;
 import com.oracle.svm.hosted.phases.AnalysisGraphBuilderPhase;
 import com.oracle.svm.hosted.phases.ImplicitAssertionsPhase;
 import com.oracle.svm.hosted.phases.InlineBeforeAnalysisPolicyImpl;
 import com.oracle.svm.hosted.substitute.UnsafeAutomaticSubstitutionProcessor;
+import com.oracle.svm.util.ReflectionUtil;
 
 import jdk.vm.ci.meta.DeoptimizationReason;
+import jdk.vm.ci.meta.JavaConstant;
 import jdk.vm.ci.meta.ResolvedJavaField;
 import jdk.vm.ci.meta.ResolvedJavaMethod;
 import jdk.vm.ci.meta.ResolvedJavaType;
@@ -218,8 +228,8 @@ public class SVMHost extends HostVM {
     }
 
     @Override
-    public boolean isRelocatedPointer(Object originalObject) {
-        return originalObject instanceof RelocatedPointer;
+    public boolean isRelocatedPointer(UniverseMetaAccess metaAccess, JavaConstant constant) {
+        return metaAccess.isInstanceOf(constant, RelocatedPointer.class);
     }
 
     @Override
@@ -376,63 +386,73 @@ public class SVMHost extends HostVM {
         /* Class names must be interned strings according to the Java specification. */
         String className = type.toClassName().intern();
         /*
-         * There is no need to have file names as interned strings. So we perform our own
-         * de-duplication.
+         * There is no need to have file names and simple binary names as interned strings. So we
+         * perform our own de-duplication.
          */
         String sourceFileName = stringTable.deduplicate(type.getSourceFileName(), true);
+        String simpleBinaryName = stringTable.deduplicate(getSimpleBinaryName(javaClass), true);
 
         Class<?> nestHost = javaClass.getNestHost();
         boolean isHidden = SubstrateUtil.isHiddenClass(javaClass);
         boolean isRecord = RecordSupport.singleton().isRecord(javaClass);
         boolean assertionStatus = RuntimeAssertionsSupport.singleton().desiredAssertionStatus(javaClass);
         boolean isSealed = SealedClassSupport.singleton().isSealed(javaClass);
+        boolean isVMInternal = type.isAnnotationPresent(InternalVMMethod.class);
+        boolean isLambdaFormHidden = type.isAnnotationPresent(LambdaFormHiddenMethod.class);
 
-        final DynamicHub dynamicHub = new DynamicHub(javaClass, className, computeHubType(type), computeReferenceType(type),
-                        isLocalClass(javaClass), isAnonymousClass(javaClass), superHub, componentHub, sourceFileName,
-                        modifiers, hubClassLoader, isHidden, isRecord, nestHost, assertionStatus, type.hasDefaultMethods(),
-                        type.declaresDefaultMethods(), isSealed);
-        if (JavaVersionUtil.JAVA_SPEC > 8) {
-            ModuleAccess.extractAndSetModule(dynamicHub, javaClass);
-        }
+        final DynamicHub dynamicHub = new DynamicHub(javaClass, className, computeHubType(type), computeReferenceType(type), superHub, componentHub, sourceFileName, modifiers, hubClassLoader,
+                        isHidden, isRecord, nestHost, assertionStatus, type.hasDefaultMethods(), type.declaresDefaultMethods(), isSealed, isVMInternal, isLambdaFormHidden, simpleBinaryName,
+                        getDeclaringClass(javaClass));
+        ModuleAccess.extractAndSetModule(dynamicHub, javaClass);
         return dynamicHub;
     }
 
-    private Object isLocalClass(Class<?> javaClass) {
+    private final Method getDeclaringClass0 = ReflectionUtil.lookupMethod(Class.class, "getDeclaringClass0");
+
+    private Object getDeclaringClass(Class<?> javaClass) {
         try {
-            return javaClass.isLocalClass();
-        } catch (InternalError e) {
-            return e;
-        } catch (LinkageError e) {
-            if (!linkAtBuildTimeSupport.linkAtBuildTime(javaClass)) {
-                return e;
-            } else {
-                return unsupportedMethod(javaClass, "isLocalClass");
+            return getDeclaringClass0.invoke(javaClass);
+        } catch (InvocationTargetException e) {
+            Throwable cause = e.getCause();
+            if (cause instanceof LinkageError) {
+                if (cause instanceof IncompatibleClassChangeError) {
+                    /*
+                     * While `IncompatibleClassChangeError` is a `LinkageError`, it doesn't actually
+                     * mean that the class that is supposed to declare `javaClass` cannot be linked,
+                     * but rather that there is some sort of mismatch between that class and
+                     * `javaClass`, so we just rethrow the error at run time.
+                     *
+                     * For example, there have been cases where the Kotlin compiler generates
+                     * anonymous classes that do not agree with their declaring classes on the
+                     * `InnerClasses` attribute.
+                     */
+                    return cause;
+                }
+                return handleLinkageError(javaClass, getDeclaringClass0.getName(), (LinkageError) cause);
             }
+            throw VMError.shouldNotReachHere(e);
+        } catch (IllegalAccessException e) {
+            throw VMError.shouldNotReachHere(e);
         }
     }
 
-    /**
-     * @return boolean if class is available or LinkageError if class' parents are not on the
-     *         classpath or InternalError if the class is invalid.
-     */
-    private Object isAnonymousClass(Class<?> javaClass) {
-        try {
-            return javaClass.isAnonymousClass();
-        } catch (InternalError e) {
-            return e;
-        } catch (LinkageError e) {
-            if (!linkAtBuildTimeSupport.linkAtBuildTime(javaClass)) {
-                return e;
-            } else {
-                return unsupportedMethod(javaClass, "isAnonymousClass");
-            }
+    private LinkageError handleLinkageError(Class<?> javaClass, String methodName, LinkageError linkageError) {
+        if (!linkAtBuildTimeSupport.linkAtBuildTime(javaClass)) {
+            return linkageError; /* It's rethrown at run time. */
         }
-    }
-
-    private Object unsupportedMethod(Class<?> javaClass, String methodName) {
         String message = "Discovered a type for which " + methodName + " cannot be called: " + javaClass.getTypeName() + ". " +
                         linkAtBuildTimeSupport.errorMessageFor(javaClass);
-        throw new UnsupportedFeatureException(message);
+        throw new UnsupportedFeatureException(message, linkageError);
+    }
+
+    private final Method getSimpleBinaryName0 = ReflectionUtil.lookupMethod(Class.class, "getSimpleBinaryName0");
+
+    private String getSimpleBinaryName(Class<?> javaClass) {
+        try {
+            return (String) getSimpleBinaryName0.invoke(javaClass);
+        } catch (IllegalAccessException | InvocationTargetException e) {
+            throw VMError.shouldNotReachHere(e);
+        }
     }
 
     public static boolean isUnknownClass(ResolvedJavaType resolvedJavaType) {
@@ -455,24 +475,25 @@ public class SVMHost extends HostVM {
         return automaticSubstitutions;
     }
 
-    private static HubType computeHubType(AnalysisType type) {
+    private static int computeHubType(AnalysisType type) {
         if (type.isArray()) {
             if (type.getComponentType().isPrimitive() || type.getComponentType().isWordType()) {
-                return HubType.TypeArray;
+                return HubType.PRIMITIVE_ARRAY;
             } else {
-                return HubType.ObjectArray;
+                return HubType.OBJECT_ARRAY;
             }
         } else if (type.isInstanceClass()) {
             if (Reference.class.isAssignableFrom(type.getJavaClass())) {
-                return HubType.InstanceReference;
+                return HubType.REFERENCE_INSTANCE;
             } else if (PodSupport.isPresent() && PodSupport.singleton().isPodClass(type.getJavaClass())) {
-                return HubType.PodInstance;
+                return HubType.POD_INSTANCE;
+            } else if (Continuation.isSupported() && type.getJavaClass() == StoredContinuation.class) {
+                return HubType.STORED_CONTINUATION_INSTANCE;
             }
             assert !Target_java_lang_ref_Reference.class.isAssignableFrom(type.getJavaClass()) : "should not see substitution type here";
-            return HubType.Instance;
-        } else {
-            return HubType.Other;
+            return HubType.INSTANCE;
         }
+        return HubType.OTHER;
     }
 
     private static ReferenceType computeReferenceType(AnalysisType type) {
@@ -506,7 +527,7 @@ public class SVMHost extends HostVM {
     @Override
     public void methodAfterParsingHook(BigBang bb, AnalysisMethod method, StructuredGraph graph) {
         if (graph != null) {
-            graph.setGuardsStage(StructuredGraph.GuardsStage.FIXED_DEOPTS);
+            graph.getGraphState().configureExplicitExceptionsNoDeoptIfNecessary();
 
             if (parseOnce) {
                 new ImplicitAssertionsPhase().apply(graph, bb.getProviders());
@@ -660,7 +681,7 @@ public class SVMHost extends HostVM {
 
     @Override
     public boolean hasNeverInlineDirective(ResolvedJavaMethod method) {
-        if (GuardedAnnotationAccess.isAnnotationPresent(method, NeverInline.class)) {
+        if (AnnotationAccess.isAnnotationPresent(method, NeverInline.class)) {
             return true;
         }
 
@@ -717,7 +738,7 @@ public class SVMHost extends HostVM {
             }
         }
 
-        Platforms platformsAnnotation = GuardedAnnotationAccess.getAnnotation(element, Platforms.class);
+        Platforms platformsAnnotation = AnnotationAccess.getAnnotation(element, Platforms.class);
         if (platform == null || platformsAnnotation == null) {
             return true;
         }
@@ -736,7 +757,7 @@ public class SVMHost extends HostVM {
     }
 
     public boolean neverInlineTrivial(AnalysisMethod caller, AnalysisMethod callee) {
-        if (!callee.canBeInlined() || GuardedAnnotationAccess.isAnnotationPresent(callee, NeverInlineTrivial.class)) {
+        if (!callee.canBeInlined() || AnnotationAccess.isAnnotationPresent(callee, NeverInlineTrivial.class)) {
             return true;
         }
         for (var handler : neverInlineTrivialHandlers) {
@@ -745,5 +766,12 @@ public class SVMHost extends HostVM {
             }
         }
         return false;
+    }
+
+    @Override
+    public Comparator<? super ResolvedJavaType> getTypeComparator() {
+        return (Comparator<ResolvedJavaType>) (o1, o2) -> {
+            return HostedUniverse.TYPE_COMPARATOR.compare((HostedType) o1, (HostedType) o2);
+        };
     }
 }

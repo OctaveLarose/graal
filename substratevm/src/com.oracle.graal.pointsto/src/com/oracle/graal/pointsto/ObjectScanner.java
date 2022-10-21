@@ -37,6 +37,8 @@ import java.util.concurrent.atomic.AtomicInteger;
 import org.graalvm.word.WordBase;
 
 import com.oracle.graal.pointsto.constraints.UnsupportedFeatureException;
+import com.oracle.graal.pointsto.heap.ImageHeapArray;
+import com.oracle.graal.pointsto.heap.ImageHeapConstant;
 import com.oracle.graal.pointsto.meta.AnalysisField;
 import com.oracle.graal.pointsto.meta.AnalysisMethod;
 import com.oracle.graal.pointsto.meta.AnalysisType;
@@ -164,7 +166,7 @@ public class ObjectScanner {
                                 System.lineSeparator() + backtrace);
             }
 
-            if (fieldValue.getJavaKind() == JavaKind.Object && bb.getHostVM().isRelocatedPointer(constantAsObject(bb, fieldValue))) {
+            if (fieldValue.getJavaKind() == JavaKind.Object && bb.getHostVM().isRelocatedPointer(bb.getMetaAccess(), fieldValue)) {
                 scanningObserver.forRelocatedPointerFieldValue(receiver, field, fieldValue, reason);
             } else if (fieldValue.isNull()) {
                 scanningObserver.forNullFieldValue(receiver, field, reason);
@@ -180,7 +182,7 @@ public class ObjectScanner {
             }
 
         } catch (UnsupportedFeatureException ex) {
-            unsupportedFeature(field.format("%H.%n"), ex.getMessage(), reason);
+            unsupportedFeatureDuringFieldScan(bb, field, receiver, ex, reason);
         }
     }
 
@@ -191,45 +193,60 @@ public class ObjectScanner {
      */
     protected final void scanArray(JavaConstant array, ScanReason prevReason) {
 
-        Object valueObj = constantAsObject(bb, array);
-        AnalysisType arrayType = analysisType(bb, valueObj);
-        assert valueObj instanceof Object[];
-
+        AnalysisType arrayType = bb.getMetaAccess().lookupJavaType(array);
         ScanReason reason = new ArrayScan(arrayType, array, prevReason);
-        Object[] arrayObject = (Object[]) valueObj;
-        for (int idx = 0; idx < arrayObject.length; idx++) {
-            Object e = arrayObject[idx];
-            try {
+
+        if (array instanceof ImageHeapConstant) {
+            if (!arrayType.getComponentType().isPrimitive()) {
+                ImageHeapArray heapArray = (ImageHeapArray) array;
+                for (int idx = 0; idx < heapArray.getLength(); idx++) {
+                    final JavaConstant element = heapArray.getElement(idx);
+                    if (element.isNull()) {
+                        scanningObserver.forNullArrayElement(array, arrayType, idx, reason);
+                    } else {
+                        scanArrayElement(array, arrayType, reason, idx, element);
+                    }
+                }
+            }
+        } else {
+            Object[] arrayObject = (Object[]) constantAsObject(bb, array);
+            for (int idx = 0; idx < arrayObject.length; idx++) {
+                Object e = arrayObject[idx];
                 if (e == null) {
                     scanningObserver.forNullArrayElement(array, arrayType, idx, reason);
                 } else {
-                    Object element = bb.getUniverse().replaceObject(e);
-                    JavaConstant elementConstant = bb.getSnippetReflectionProvider().forObject(element);
-                    AnalysisType elementType = analysisType(bb, element);
-                    /* First notify the observer about the array element value... */
-                    scanningObserver.forNonNullArrayElement(array, arrayType, elementConstant, elementType, idx, reason);
-                    /*
-                     * ... and only then scan the new value, i.e., follow its references. The order
-                     * is important for observers that expect to see the receiver before any of its
-                     * referenced elements are being scanned.
-                     */
-                    scanConstant(elementConstant, reason);
+                    try {
+                        JavaConstant element = bb.getSnippetReflectionProvider().forObject(bb.getUniverse().replaceObject(e));
+                        scanArrayElement(array, arrayType, reason, idx, element);
+                    } catch (UnsupportedFeatureException ex) { /* Object replacement can throw. */
+                        unsupportedFeatureDuringConstantScan(bb, bb.getSnippetReflectionProvider().forObject(e), ex, reason);
+                    }
                 }
-            } catch (UnsupportedFeatureException ex) {
-                unsupportedFeature(arrayType.toJavaName(true), ex.getMessage(), reason);
             }
         }
     }
 
+    private void scanArrayElement(JavaConstant array, AnalysisType arrayType, ScanReason reason, int idx, JavaConstant elementConstant) {
+        AnalysisType elementType = bb.getMetaAccess().lookupJavaType(elementConstant);
+        /* First notify the observer about the array element value... */
+        scanningObserver.forNonNullArrayElement(array, arrayType, elementConstant, elementType, idx, reason);
+        /*
+         * ... and only then scan the new value, i.e., follow its references. The order is important
+         * for observers that expect to see the receiver before any of its referenced elements are
+         * being scanned.
+         */
+        scanConstant(elementConstant, reason);
+    }
+
     public final void scanConstant(JavaConstant value, ScanReason reason) {
-        Object valueObj = constantAsObject(bb, value);
-        if (valueObj == null || valueObj instanceof WordBase) {
+        if (value.isNull() || bb.getMetaAccess().isInstanceOf(value, WordBase.class)) {
             return;
         }
         if (!bb.scanningPolicy().scanConstant(bb, value)) {
-            bb.markTypeInHeap(analysisType(bb, valueObj));
+            bb.markTypeInHeap(bb.getMetaAccess().lookupJavaType(value));
             return;
         }
+        Object valueObj = (value instanceof ImageHeapConstant) ? value : constantAsObject(bb, value);
         if (scannedObjects.putAndAcquire(valueObj) == null) {
             try {
                 scanningObserver.forScannedConstant(value, reason);
@@ -245,7 +262,24 @@ public class ObjectScanner {
         }
     }
 
-    private void unsupportedFeature(String key, String message, ScanReason reason) {
+    /**
+     * Use the constant hashCode as a key for the unsupported feature to register only one error
+     * message if the constant is reachable from multiple places.
+     */
+    public static void unsupportedFeatureDuringConstantScan(BigBang bb, JavaConstant constant, UnsupportedFeatureException e, ScanReason reason) {
+        unsupportedFeature(bb, String.valueOf(constant.hashCode()), e.getMessage(), reason);
+    }
+
+    /**
+     * Use the field format and receiver hashCode as a key for the unsupported feature to register
+     * only one error message if the value is reachable from multiple places. For example both the
+     * heap scanning and the heap verification would scan a field that contains an illegal value.
+     */
+    public static void unsupportedFeatureDuringFieldScan(BigBang bb, AnalysisField field, JavaConstant receiver, UnsupportedFeatureException e, ScanReason reason) {
+        unsupportedFeature(bb, (receiver != null ? receiver.hashCode() + "_" : "") + field.format("%H.%n"), e.getMessage(), reason);
+    }
+
+    public static void unsupportedFeature(BigBang bb, String key, String message, ScanReason reason) {
         StringBuilder objectBacktrace = new StringBuilder();
         AnalysisMethod method = buildObjectBacktrace(bb, reason, objectBacktrace);
         bb.getUnsupportedFeatures().addMessage(key, method, message, objectBacktrace.toString());
@@ -299,14 +333,17 @@ public class ObjectScanner {
     }
 
     public static String asString(BigBang bb, JavaConstant constant, boolean appendToString) {
-        if (constant == null) {
+        if (constant == null || constant.isNull()) {
             return "null";
+        }
+        AnalysisType type = bb.getMetaAccess().lookupJavaType(constant);
+        if (constant instanceof ImageHeapConstant) {
+            // Checkstyle: allow Class.getSimpleName
+            return constant.getClass().getSimpleName() + "<" + type.toJavaName() + ">";
+            // Checkstyle: disallow Class.getSimpleName
         }
         Object obj = constantAsObject(bb, constant);
-        if (obj == null) {
-            return "null";
-        }
-        String str = analysisType(bb, obj).toJavaName() + '@' + Integer.toHexString(System.identityHashCode(obj));
+        String str = type.toJavaName() + '@' + Integer.toHexString(System.identityHashCode(obj));
         if (appendToString) {
             try {
                 str += ": " + limit(obj.toString(), 80).replace(System.lineSeparator(), "");
@@ -334,10 +371,8 @@ public class ObjectScanner {
      * element constants.
      */
     private void doScan(WorklistEntry entry) {
-        Object valueObj = constantAsObject(bb, entry.constant);
-
         try {
-            AnalysisType type = analysisType(bb, valueObj);
+            AnalysisType type = bb.getMetaAccess().lookupJavaType(entry.constant);
             type.registerAsReachable();
 
             if (type.isInstanceClass()) {
@@ -353,7 +388,7 @@ public class ObjectScanner {
                 scanArray(entry.constant, entry.reason);
             }
         } catch (UnsupportedFeatureException ex) {
-            unsupportedFeature("", ex.getMessage(), entry.reason);
+            unsupportedFeatureDuringConstantScan(bb, entry.constant, ex, entry.reason);
         }
     }
 
@@ -373,10 +408,6 @@ public class ObjectScanner {
                 }
             }
         }
-    }
-
-    protected static AnalysisType analysisType(BigBang bb, Object constant) {
-        return bb.getMetaAccess().lookupJavaType(constant.getClass());
     }
 
     public static AnalysisType constantType(BigBang bb, JavaConstant constant) {

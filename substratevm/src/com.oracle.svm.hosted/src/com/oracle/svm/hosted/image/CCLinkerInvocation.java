@@ -37,6 +37,7 @@ import java.util.Set;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
+import com.oracle.svm.hosted.c.libc.HostedLibCBase;
 import org.graalvm.compiler.options.Option;
 import org.graalvm.nativeimage.ImageSingletons;
 import org.graalvm.nativeimage.Platform;
@@ -46,6 +47,7 @@ import com.oracle.objectfile.macho.MachOSymtab;
 import com.oracle.svm.core.LinkerInvocation;
 import com.oracle.svm.core.OS;
 import com.oracle.svm.core.SubstrateOptions;
+import com.oracle.svm.core.c.libc.BionicLibC;
 import com.oracle.svm.core.c.libc.LibCBase;
 import com.oracle.svm.core.option.HostedOptionKey;
 import com.oracle.svm.core.option.LocatableMultiOptionValue;
@@ -228,11 +230,6 @@ public abstract class CCLinkerInvocation implements LinkerInvocation {
     }
 
     @Override
-    public void addAdditionalPreOption(String option) {
-        additionalPreOptions.add(option);
-    }
-
-    @Override
     public void addNativeLinkerOption(String option) {
         nativeLinkerOptions.add(option);
     }
@@ -282,6 +279,8 @@ public abstract class CCLinkerInvocation implements LinkerInvocation {
 
                     // Drop global symbols in linked static libraries: not covered by --dynamic-list
                     additionalPreOptions.add("-Wl,--exclude-libs,ALL");
+
+                    additionalPreOptions.addAll(HostedLibCBase.singleton().getAdditionalLinkerOptions(imageKind));
                 } catch (IOException e) {
                     VMError.shouldNotReachHere();
                 }
@@ -341,9 +340,25 @@ public abstract class CCLinkerInvocation implements LinkerInvocation {
         DarwinCCLinkerInvocation(AbstractImage.NativeImageKind imageKind, NativeLibraries nativeLibs, List<ObjectFile.Symbol> symbols) {
             // Workaround building images with older Xcode with new libraries
             super(imageKind, nativeLibs, symbols);
+            setLinkerFlags(nativeLibs, false);
+        }
+
+        private void setLinkerFlags(NativeLibraries nativeLibs, boolean useFallback) {
             additionalPreOptions.add("-Wl,-U,___darwin_check_fd_set_overflow");
 
-            if (!SubstrateOptions.useLLVMBackend()) {
+            boolean useLld = false;
+            if (useFallback) {
+                Path lld = LLVMToolchain.getLLVMBinDir().resolve("ld64.lld").toAbsolutePath();
+                if (Files.exists(lld)) {
+                    useLld = true;
+                    additionalPreOptions.add("-fuse-ld=" + lld);
+                } else {
+                    throw new RuntimeException("The Native Image build ran into a ld64 limitation. Please use ld64.lld via `gu install llvm-toolchain` and run the same command again.");
+                }
+            }
+
+            if (!SubstrateOptions.useLLVMBackend() && !useLld) {
+                /* flag is not understood by LLVM linker */
                 additionalPreOptions.add("-Wl,-no_compact_unwind");
             }
 
@@ -375,6 +390,22 @@ public abstract class CCLinkerInvocation implements LinkerInvocation {
             } else if (Platform.includedIn(Platform.AARCH64.class)) {
                 additionalPreOptions.add("arm64");
             }
+        }
+
+        @Override
+        public List<String> getFallbackCommand() {
+            additionalPreOptions.clear();
+            setLinkerFlags(nativeLibs, true);
+            return getCommand();
+        }
+
+        @Override
+        public boolean shouldRunFallback(String message) {
+            if (Platform.includedIn(Platform.AARCH64.class)) {
+                /* detect ld64 limitation around inserting branch islands, retry with LLVM linker */
+                return message.contains("branch out of range") || message.contains("Unable to insert branch island");
+            }
+            return false;
         }
 
         @Override
@@ -531,7 +562,7 @@ public abstract class CCLinkerInvocation implements LinkerInvocation {
         }
 
         Collection<String> libraries = nativeLibs.getLibraries();
-        if (Platform.includedIn(Platform.LINUX.class) && ImageSingletons.lookup(LibCBase.class).getName().equals("bionic")) {
+        if (Platform.includedIn(Platform.LINUX.class) && LibCBase.targetLibCIs(BionicLibC.class)) {
             // on Bionic LibC pthread.h and rt.h are included in standard library and adding them in
             // linker call produces error
             libraries = libraries.stream().filter(library -> !Arrays.asList("pthread", "rt").contains(library)).collect(Collectors.toList());

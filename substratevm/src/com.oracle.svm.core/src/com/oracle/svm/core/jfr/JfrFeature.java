@@ -32,14 +32,15 @@ import org.graalvm.nativeimage.Platform;
 import org.graalvm.nativeimage.hosted.Feature;
 import org.graalvm.nativeimage.impl.RuntimeClassInitializationSupport;
 
+import com.oracle.svm.core.Uninterruptible;
 import com.oracle.svm.core.VMInspectionOptions;
-import com.oracle.svm.core.annotate.AutomaticFeature;
-import com.oracle.svm.core.annotate.Uninterruptible;
+import com.oracle.svm.core.feature.AutomaticallyRegisteredFeature;
+import com.oracle.svm.core.feature.InternalFeature;
 import com.oracle.svm.core.jdk.RuntimeSupport;
 import com.oracle.svm.core.jfr.traceid.JfrTraceIdEpoch;
 import com.oracle.svm.core.jfr.traceid.JfrTraceIdMap;
-import com.oracle.svm.core.thread.ThreadListenerFeature;
 import com.oracle.svm.core.thread.ThreadListenerSupport;
+import com.oracle.svm.core.thread.ThreadListenerSupportFeature;
 import com.oracle.svm.core.util.UserError;
 import com.oracle.svm.core.util.VMError;
 import com.oracle.svm.util.ModuleSupport;
@@ -49,7 +50,6 @@ import com.sun.management.internal.PlatformMBeanProviderImpl;
 
 import jdk.jfr.Configuration;
 import jdk.jfr.Event;
-import jdk.jfr.internal.EventWriter;
 import jdk.jfr.internal.JVM;
 import jdk.jfr.internal.jfc.JFC;
 
@@ -61,7 +61,7 @@ import jdk.jfr.internal.jfc.JFC;
  * <ul>
  * <li>Java-level events are defined by a Java class that extends {@link Event} and that is
  * annotated with JFR-specific annotations. Those events are typically triggered by the Java
- * application and a Java {@link EventWriter} object is used when writing the event to a
+ * application and a Java {@code EventWriter} object is used when writing the event to a
  * buffer.</li>
  * <li>Native events are triggered by the JVM itself and are defined in the JFR metadata.xml file.
  * For writing such an event to a buffer, we call into {@link JfrNativeEventWriter} and pass a
@@ -92,8 +92,8 @@ import jdk.jfr.internal.jfc.JFC;
  * consistent state).</li>
  * </ul>
  */
-@AutomaticFeature
-public class JfrFeature implements Feature {
+@AutomaticallyRegisteredFeature
+public class JfrFeature implements InternalFeature {
     /*
      * Note that we could initialize the native part of JFR at image build time and that the native
      * code sets the FlightRecorder option as a side effect. Therefore, we must ensure that we check
@@ -112,7 +112,7 @@ public class JfrFeature implements Feature {
             throw UserError.abort("FlightRecorder cannot be used to profile the image generator on this platform. " +
                             "The image generator can only be profiled on platforms where FlightRecoder is also supported at run time.");
         }
-        boolean runtimeEnabled = VMInspectionOptions.AllowVMInspection.getValue();
+        boolean runtimeEnabled = VMInspectionOptions.hasJfrSupport();
         if (HOSTED_ENABLED && !runtimeEnabled) {
             if (allowPrinting) {
                 System.err.println("Warning: When FlightRecoder is used to profile the image generator, it is also automatically enabled in the native image at run time. " +
@@ -142,7 +142,7 @@ public class JfrFeature implements Feature {
 
     @Override
     public List<Class<? extends Feature>> getRequiredFeatures() {
-        return Collections.singletonList(ThreadListenerFeature.class);
+        return Collections.singletonList(ThreadListenerSupportFeature.class);
     }
 
     @Override

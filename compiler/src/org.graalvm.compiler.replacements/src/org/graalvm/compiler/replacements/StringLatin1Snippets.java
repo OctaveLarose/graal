@@ -34,8 +34,10 @@ import static org.graalvm.compiler.replacements.StringHelperIntrinsics.getByte;
 
 import org.graalvm.compiler.api.replacements.Fold.InjectedParameter;
 import org.graalvm.compiler.api.replacements.Snippet;
+import org.graalvm.compiler.core.common.Stride;
 import org.graalvm.compiler.options.OptionValues;
 import org.graalvm.compiler.phases.util.Providers;
+import org.graalvm.compiler.replacements.nodes.ArrayIndexOfNode;
 import org.graalvm.compiler.replacements.nodes.ArrayRegionEqualsNode;
 
 import jdk.vm.ci.meta.JavaKind;
@@ -48,11 +50,13 @@ public class StringLatin1Snippets implements Snippets {
 
     public static class Templates extends SnippetTemplate.AbstractTemplates {
 
+        public final SnippetTemplate.SnippetInfo indexOf;
+
         public Templates(OptionValues options, Providers providers) {
             super(options, providers);
-        }
 
-        public final SnippetTemplate.SnippetInfo indexOf = snippet(StringLatin1Snippets.class, "indexOf");
+            this.indexOf = snippet(providers, StringLatin1Snippets.class, "indexOf");
+        }
     }
 
     /** Marker value for the {@link InjectedParameter} injected parameter. */
@@ -71,7 +75,7 @@ public class StringLatin1Snippets implements Snippets {
             return -1;
         }
         if (injectBranchProbability(UNLIKELY_PROBABILITY, targetCount == 1)) {
-            return ArrayIndexOf.indexOfB1S1(source, sourceCount, fromIndex, getByte(target, 0));
+            return ArrayIndexOfNode.optimizedArrayIndexOf(JavaKind.Byte, Stride.S1, false, false, source, byteArrayOffset(0), sourceCount, fromIndex, Byte.toUnsignedInt(getByte(target, 0)));
         } else {
             int haystackLength = sourceCount - (targetCount - 2);
             int offset = fromIndex;
@@ -79,7 +83,8 @@ public class StringLatin1Snippets implements Snippets {
                 byte b1 = getByte(target, 0);
                 byte b2 = getByte(target, 1);
                 do {
-                    int indexOfResult = ArrayIndexOf.indexOfTwoConsecutiveBS1(source, haystackLength, offset, b1, b2);
+                    int indexOfResult = ArrayIndexOfNode.optimizedArrayIndexOf(JavaKind.Byte, Stride.S1, true, false, source, byteArrayOffset(0), haystackLength, offset, Byte.toUnsignedInt(b1),
+                                    Byte.toUnsignedInt(b2));
                     if (injectBranchProbability(UNLIKELY_PROBABILITY, indexOfResult < 0)) {
                         return -1;
                     }
@@ -88,7 +93,7 @@ public class StringLatin1Snippets implements Snippets {
                         return offset;
                     } else {
                         if (injectBranchProbability(UNLIKELY_PROBABILITY,
-                                        ArrayRegionEqualsNode.regionEquals(source, byteArrayOffset(offset), target, byteArrayOffset(0), targetCount, JavaKind.Byte))) {
+                                        ArrayRegionEqualsNode.regionEquals(source, byteArrayOffset(offset), target, byteArrayOffset(0), targetCount, JavaKind.Byte, Stride.S1, Stride.S1))) {
                             return offset;
                         }
                     }

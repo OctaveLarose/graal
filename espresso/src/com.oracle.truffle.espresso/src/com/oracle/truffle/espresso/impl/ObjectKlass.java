@@ -47,9 +47,9 @@ import com.oracle.truffle.api.CompilerAsserts;
 import com.oracle.truffle.api.CompilerDirectives;
 import com.oracle.truffle.api.CompilerDirectives.CompilationFinal;
 import com.oracle.truffle.api.CompilerDirectives.TruffleBoundary;
+import com.oracle.truffle.api.HostCompilerDirectives;
 import com.oracle.truffle.api.Truffle;
 import com.oracle.truffle.api.exception.AbstractTruffleException;
-import com.oracle.truffle.api.nodes.ExplodeLoop;
 import com.oracle.truffle.api.source.Source;
 import com.oracle.truffle.espresso.analysis.hierarchy.ClassHierarchyAssumption;
 import com.oracle.truffle.espresso.analysis.hierarchy.ClassHierarchyOracle;
@@ -73,6 +73,7 @@ import com.oracle.truffle.espresso.descriptors.Symbol;
 import com.oracle.truffle.espresso.descriptors.Symbol.Name;
 import com.oracle.truffle.espresso.descriptors.Symbol.Signature;
 import com.oracle.truffle.espresso.descriptors.Symbol.Type;
+import com.oracle.truffle.espresso.descriptors.Types;
 import com.oracle.truffle.espresso.impl.ModuleTable.ModuleEntry;
 import com.oracle.truffle.espresso.impl.PackageTable.PackageEntry;
 import com.oracle.truffle.espresso.jdwp.api.Ids;
@@ -103,6 +104,12 @@ public final class ObjectKlass extends Klass {
 
     @CompilationFinal //
     private StaticObject statics;
+
+    static {
+        // Ensures that 'statics' field can be non-volatile. This uses "Unsafe Local DCL + Safe
+        // Singleton" as described in https://shipilev.net/blog/2014/safe-public-construction
+        assert hasFinalInstanceField(StaticObject.class);
+    }
 
     private final Klass hostKlass;
 
@@ -194,10 +201,13 @@ public final class ObjectKlass extends Klass {
         }
         for (int i = 0; i < lkStaticFields.length; i++) {
             Field staticField;
-            if (superKlass == getMeta().java_lang_Enum && !isEnumValuesField(lkStaticFields[i])) {
-                staticField = new EnumConstantField(klassVersion, lkStaticFields[i], pool);
+            LinkedField lkField = lkStaticFields[i];
+            // User-defined static non-final fields should remain modifiable.
+            if (superKlass == getMeta().java_lang_Enum && !isEnumValuesField(lkField) //
+                            && Types.isReference(lkField.getType()) && Modifier.isFinal(lkField.getFlags())) {
+                staticField = new EnumConstantField(klassVersion, lkField, pool);
             } else {
-                staticField = new Field(klassVersion, lkStaticFields[i], pool);
+                staticField = new Field(klassVersion, lkField, pool);
             }
             staticFieldTable[i] = staticField;
         }
@@ -206,10 +216,10 @@ public final class ObjectKlass extends Klass {
         if (info.protectionDomain != null && !StaticObject.isNull(info.protectionDomain)) {
             // Protection domain should not be host null, and will be initialized to guest null on
             // mirror creation.
-            getMeta().HIDDEN_PROTECTION_DOMAIN.setHiddenObject(mirror(), info.protectionDomain);
+            getMeta().HIDDEN_PROTECTION_DOMAIN.setHiddenObject(initializeEspressoClass(), info.protectionDomain);
         }
         if (info.classData != null) {
-            getMeta().java_lang_Class_classData.setObject(mirror(), info.classData);
+            getMeta().java_lang_Class_classData.setObject(initializeEspressoClass(), info.classData);
         }
         if (!info.addedToRegistry()) {
             initSelfReferenceInPool();
@@ -218,6 +228,9 @@ public final class ObjectKlass extends Klass {
         this.implementor = getContext().getClassHierarchyOracle().initializeImplementorForNewKlass(this);
         getContext().getClassHierarchyOracle().registerNewKlassVersion(klassVersion);
         this.initState = LOADED;
+        if (getMeta().java_lang_Class != null) {
+            initializeEspressoClass();
+        }
         assert verifyTables();
     }
 
@@ -228,7 +241,7 @@ public final class ObjectKlass extends Klass {
 
     private void addSubType(ObjectKlass objectKlass) {
         // We only build subtypes model iff jdwp is enabled
-        if (getContext().JDWPOptions != null) {
+        if (getContext().getEspressoEnv().JDWPOptions != null) {
             if (subTypes == null) {
                 synchronized (this) {
                     // double-checked locking
@@ -298,17 +311,21 @@ public final class ObjectKlass extends Klass {
     }
 
     StaticObject getStaticsImpl() {
-        if (statics == null) {
-            obtainStatics();
+        StaticObject result = this.statics;
+        if (result == null) {
+            CompilerDirectives.transferToInterpreterAndInvalidate();
+            result = createStatics();
         }
-        return statics;
+        return result;
     }
 
-    private synchronized void obtainStatics() {
-        if (statics == null) {
-            CompilerDirectives.transferToInterpreterAndInvalidate();
-            statics = getAllocator().createStatics(this);
+    private synchronized StaticObject createStatics() {
+        CompilerAsserts.neverPartOfCompilation();
+        StaticObject result = this.statics;
+        if (result == null) {
+            this.statics = result = getAllocator().createStatics(this);
         }
+        return result;
     }
 
     // region InitStatus
@@ -374,7 +391,7 @@ public final class ObjectKlass extends Klass {
         throw meta.throwExceptionWithMessage(meta.java_lang_NoClassDefFoundError, "Erroneous class: " + getName());
     }
 
-    @ExplodeLoop
+    @TruffleBoundary
     private void actualInit() {
         checkErroneousInitialization();
         getInitLock().lock();
@@ -561,37 +578,51 @@ public final class ObjectKlass extends Klass {
     public void ensureLinked() {
         if (!isLinked()) {
             checkErroneousVerification();
-            CompilerDirectives.transferToInterpreterAndInvalidate();
-            getInitLock().lock();
-            try {
-                if (!isLinkingOrLinked()) {
-                    initState = LINKING;
-                    if (getSuperKlass() != null) {
-                        getSuperKlass().ensureLinked();
-                    }
-                    for (ObjectKlass interf : getSuperInterfaces()) {
-                        interf.ensureLinked();
-                    }
-                    prepare();
-                    verify();
-                    initState = LINKED;
-                }
-            } finally {
-                getInitLock().unlock();
+            if (CompilerDirectives.isCompilationConstant(this)) {
+                CompilerDirectives.transferToInterpreterAndInvalidate();
             }
-            checkErroneousVerification();
+            doLink();
         }
+    }
+
+    @TruffleBoundary
+    private void doLink() {
+        getInitLock().lock();
+        try {
+            if (!isLinkingOrLinked()) {
+                initState = LINKING;
+                if (getSuperKlass() != null) {
+                    getSuperKlass().ensureLinked();
+                }
+                for (ObjectKlass interf : getSuperInterfaces()) {
+                    interf.ensureLinked();
+                }
+                prepare();
+                verify();
+                initState = LINKED;
+            }
+        } finally {
+            getInitLock().unlock();
+        }
+        checkErroneousVerification();
     }
 
     void initializeImpl() {
         if (!isInitializedImpl()) { // Skip synchronization and locks if already init.
             // Allow folding the exception path if erroneous
-            checkErroneousVerification();
-            checkErroneousInitialization();
-            CompilerDirectives.transferToInterpreterAndInvalidate();
-            ensureLinked();
-            actualInit();
+            doInitialize();
         }
+    }
+
+    @HostCompilerDirectives.InliningCutoff
+    private void doInitialize() {
+        checkErroneousVerification();
+        checkErroneousInitialization();
+        if (CompilerDirectives.isCompilationConstant(this)) {
+            CompilerDirectives.transferToInterpreterAndInvalidate();
+        }
+        ensureLinked();
+        actualInit();
     }
 
     private void recursiveInitialize() {
@@ -697,7 +728,7 @@ public final class ObjectKlass extends Klass {
                 try {
                     MethodVerifier.verify(m);
                 } catch (MethodVerifier.VerifierError e) {
-                    String message = String.format("Verification for class `%s` failed for method `%s`", getExternalName(), m.getNameAsString());
+                    String message = String.format("Verification for class `%s` failed for method `%s` with message `%s`", getExternalName(), m.getNameAsString(), e.getMessage());
                     switch (e.kind()) {
                         case Verify:
                             throw meta.throwExceptionWithMessage(meta.java_lang_VerifyError, message);
@@ -1253,17 +1284,6 @@ public final class ObjectKlass extends Klass {
     @Override
     public int getClassModifiers() {
         return getKlassVersion().getClassModifiers();
-    }
-
-    @Override
-    public int getModifiers() {
-        // getKlassVersion().getModifiers() introduces a ~10%
-        // perf hit on some benchmarks, so put behind a check
-        if (getContext().advancedRedefinitionEnabled()) {
-            return getKlassVersion().getModifiers();
-        } else {
-            return super.getModifiers();
-        }
     }
 
     @Override

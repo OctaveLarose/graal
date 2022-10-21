@@ -40,7 +40,7 @@ import org.graalvm.word.UnsignedWord;
 import org.graalvm.word.WordFactory;
 
 import com.oracle.svm.core.SubstrateGCOptions;
-import com.oracle.svm.core.annotate.Uninterruptible;
+import com.oracle.svm.core.Uninterruptible;
 import com.oracle.svm.core.code.CodeInfo;
 import com.oracle.svm.core.code.CodeInfoAccess;
 import com.oracle.svm.core.code.RuntimeCodeCache.CodeInfoVisitor;
@@ -64,6 +64,7 @@ public abstract class AbstractMemoryMXBean implements MemoryMXBean, Notification
     }
 
     @Override
+    @SuppressWarnings("deprecation")
     public int getObjectPendingFinalizationCount() {
         // SVM does not have any finalization support.
         return 0;

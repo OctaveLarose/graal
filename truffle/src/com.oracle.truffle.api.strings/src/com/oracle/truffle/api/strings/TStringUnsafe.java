@@ -41,6 +41,7 @@
 
 package com.oracle.truffle.api.strings;
 
+import java.lang.Runtime.Version;
 import java.lang.reflect.Field;
 
 import com.oracle.truffle.api.CompilerDirectives;
@@ -52,16 +53,11 @@ final class TStringUnsafe {
 
     @TruffleBoundary
     private static int getJavaSpecificationVersion() {
-        String value = System.getProperty("java.specification.version");
-        if (value.startsWith("1.")) {
-            value = value.substring(2);
-        }
-        return Integer.parseInt(value);
+        return Runtime.version().feature();
     }
 
     /**
-     * The integer value corresponding to the value of the {@code java.specification.version} system
-     * property after any leading {@code "1."} has been stripped.
+     * The value of calling {@link Version#feature()} on {@link Runtime#version()}.
      */
     static final int JAVA_SPEC = getJavaSpecificationVersion();
 
@@ -77,9 +73,14 @@ final class TStringUnsafe {
         Field valueField = getStringDeclaredField("value");
         Field coderField = getStringDeclaredField("coder");
         Field hashField = getStringDeclaredField("hash");
-        javaStringValueFieldOffset = UNSAFE.objectFieldOffset(valueField);
-        javaStringCoderFieldOffset = UNSAFE.objectFieldOffset(coderField);
-        javaStringHashFieldOffset = UNSAFE.objectFieldOffset(hashField);
+        javaStringValueFieldOffset = getObjectFieldOffset(valueField);
+        javaStringCoderFieldOffset = getObjectFieldOffset(coderField);
+        javaStringHashFieldOffset = getObjectFieldOffset(hashField);
+    }
+
+    @SuppressWarnings("deprecation" /* JDK-8277863 */)
+    private static long getObjectFieldOffset(Field field) {
+        return UNSAFE.objectFieldOffset(field);
     }
 
     @TruffleBoundary

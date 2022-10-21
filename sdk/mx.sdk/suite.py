@@ -39,9 +39,9 @@
 # SOFTWARE.
 #
 suite = {
-  "mxversion" : "6.0.1",
+  "mxversion" : "6.8.0",
   "name" : "sdk",
-  "version" : "22.3.0",
+  "version" : "23.0.0",
   "release" : False,
   "sourceinprojectwhitelist" : [],
   "url" : "https://github.com/oracle/graal",
@@ -76,7 +76,15 @@ suite = {
   },
   "snippetsPattern" : ".*(Snippets|doc-files).*",
   "defaultLicense" : "UPL",
-  "imports": {},
+  "imports": {
+    "suites": [
+      {
+        "name": "docs",
+        "subdir": True,
+      },
+    ]
+  },
+  "ignore_suite_commit_info": True,
   "libraries" : {
     "WRK_MULTIARCH": {
       "urls": ["https://lafo.ssw.uni-linz.ac.at/pub/graal-external-deps/wrk-a211dd5-multiarch.tar.gz"],
@@ -95,6 +103,32 @@ suite = {
       "sha1": "17480a0905d9d485bc8ce8e7be9daec2de98c251",
       "packedResource": True,
       "license": "Apache-2.0",
+    },
+    "UPX": {
+      "packedResource": True,
+      "os_arch" : {
+        "linux" : {
+          "amd64" : {
+            "sha1": "bbec782ba0864d71fe49ffbba85fbb1b1f8fb734",
+            "urls": ["https://lafo.ssw.uni-linz.ac.at/pub/graal-external-deps/upx/upx-3.96-amd64_linux.tar.gz"],
+          },
+          "aarch64" : {
+            "sha1" : "91acc0b24ae5fe9b13d1d313c851b7b308b66aa6",
+            "urls": ["https://lafo.ssw.uni-linz.ac.at/pub/graal-external-deps/upx/upx-3.96-arm64_linux.tar.gz"],
+          }
+        },
+        "windows" : {
+          "amd64" : {
+            "sha1": "7db7a58c4edd9f772f1d9dda77ec18adc6b8ce78",
+            "urls": ["https://lafo.ssw.uni-linz.ac.at/pub/graal-external-deps/upx/upx-3.96-win64.zip"],
+          }
+        },
+        "<others>" : {
+          "<others>" : {
+            "optional": True,
+          }
+        }
+      }
     },
     "JLINE" : {
       "sha1" : "c3aeac59c022bdc497c8c48ed86fa50450e4896a",
@@ -145,33 +179,37 @@ suite = {
       ],
     },
     "LLVM_ORG" : {
-      "version" : "14.0.3-2-g772a7a659e-bgd661ed0276",
+      "version" : "14.0.6-3-gc7a4a53c32-bgc5e298fd27",
       "host" : "https://lafo.ssw.uni-linz.ac.at/pub/llvm-org",
       "os_arch" : {
         "linux" : {
           "amd64" : {
             "urls" : ["{host}/llvm-llvmorg-{version}-linux-amd64.tar.gz"],
-            "sha1" : "f32dc5497d9dd679f9ef42fd26918c3ad659b8e3",
+            "sha1" : "4cd45eff8e914189dd8bebcfaf46271c412c57fa",
           },
           "aarch64" : {
             "urls" : ["{host}/llvm-llvmorg-{version}-linux-aarch64.tar.gz"],
-            "sha1" : "8bf8d3f96b6be5d361e809d1928c3b6c46791dfe",
-          }
+            "sha1" : "bf95d0cb96d29d061e2106f221f9535d38d37daf",
+          },
+          "riscv64": {
+            "urls" : ["{host}/llvm-llvmorg-{version}-linux-riscv64.tar.gz"],
+            "sha1" : "4a75da563e277f5d222778f2b814b8e5f7e82609",
+          },
         },
         "darwin" : {
           "amd64" : {
             "urls" : ["{host}/llvm-llvmorg-{version}-darwin-amd64.tar.gz"],
-            "sha1" : "3c8677b9802fb4b98584b719b75161385c794013",
+            "sha1" : "61960f183a08436c16652c6bc8b0de67468899fb",
           },
           "aarch64" : {
             "urls" : ["{host}/llvm-llvmorg-{version}-darwin-aarch64.tar.gz"],
-            "sha1" : "9e759cc4d31392d20a84596c6216952fc27054b8",
+            "sha1" : "f8a11403a5a975ff7eb231c785979a37000cbf62",
           }
         },
         "windows" : {
           "amd64" : {
             "urls" : ["{host}/llvm-llvmorg-{version}-windows-amd64.tar.gz"],
-            "sha1" : "5ec8f96f0d77c0ba24b2e0f6b507252b5f116916",
+            "sha1" : "3e4cae36505ba566a983b3beacdb3523ccbf114e",
           }
         },
         "<others>": {
@@ -183,19 +221,19 @@ suite = {
       "license" : "Apache-2.0-LLVM",
     },
     "LLVM_ORG_COMPILER_RT_LINUX" : {
-      "version" : "14.0.3-2-g772a7a659e-bgd661ed0276",
+      "version" : "14.0.6-3-gc7a4a53c32-bgc5e298fd27",
       "host" : "https://lafo.ssw.uni-linz.ac.at/pub/llvm-org",
       # we really want linux-amd64, also on non-linux and non-amd64 platforms for cross-compilation
       "urls" : ["{host}/compiler-rt-llvmorg-{version}-linux-amd64.tar.gz"],
-      "sha1" : "95e3f75f819c510111d8c460d74a7a9186b59e5a",
+      "sha1" : "e214d63812b9276880e5c4e1849a493653f1e269",
       "license" : "Apache-2.0-LLVM",
     },
     "LLVM_ORG_SRC" : {
-      "version" : "14.0.3-2-g772a7a659e-bgd661ed0276",
+      "version" : "14.0.6-3-gc7a4a53c32-bgc5e298fd27",
       "host" : "https://lafo.ssw.uni-linz.ac.at/pub/llvm-org",
       "packedResource" : True,
       "urls" : ["{host}/llvm-src-llvmorg-{version}.tar.gz"],
-      "sha1" : "f762ff022e26af02b0fbb3176d7280bc4809f562",
+      "sha1" : "4b631ecd732e38d491ff6f41da796e393cb1d874",
       "license" : "Apache-2.0-LLVM",
     },
   },
@@ -244,6 +282,16 @@ suite = {
       "javaCompliance" : "11+",
       "workingSets" : "API,SDK",
     },
+    "com.oracle.svm.core.annotate" : {
+      "subDir" : "src",
+      "sourceDirs" : ["src"],
+      "dependencies" : [
+         "org.graalvm.nativeimage",
+      ],
+      "checkstyle" : "org.graalvm.word",
+      "javaCompliance" : "11+",
+      "workingSets" : "API,SDK",
+    },
     "org.graalvm.nativeimage.test" : {
       "subDir" : "src",
       "sourceDirs" : ["src"],
@@ -266,6 +314,9 @@ suite = {
       "requires" : [
         "java.logging",
       ],
+      "requiresConcealed" : {
+        "java.base" : ["jdk.internal.module"],
+      },
       "javaCompliance" : "11+",
       "workingSets" : "Truffle,Tools",
       "checkstyle" : "org.graalvm.word",
@@ -357,6 +408,7 @@ suite = {
       "dependencies" : [
         "org.graalvm.polyglot",
         "org.graalvm.nativeimage",
+        "com.oracle.svm.core.annotate",
         "org.graalvm.collections",
         "org.graalvm.home",
       ],
@@ -369,6 +421,7 @@ suite = {
           "org.graalvm.collections",
           "org.graalvm.home",
           "org.graalvm.home.impl",
+          "com.oracle.svm.core.annotate",
           "org.graalvm.nativeimage.hosted",
           "org.graalvm.nativeimage.c.function",
           "org.graalvm.nativeimage.c.struct",
@@ -384,7 +437,7 @@ suite = {
           "org.graalvm.word",
           "org.graalvm.polyglot.impl to org.graalvm.truffle, com.oracle.graal.graal_enterprise",
           "org.graalvm.word.impl to jdk.internal.vm.compiler",
-          "org.graalvm.nativeimage.impl to org.graalvm.nativeimage.builder,org.graalvm.nativeimage.configure,com.oracle.svm.svm_enterprise",
+          "org.graalvm.nativeimage.impl to org.graalvm.nativeimage.base,org.graalvm.nativeimage.builder,org.graalvm.nativeimage.configure,com.oracle.svm.svm_enterprise",
           "org.graalvm.nativeimage.impl.clinit to org.graalvm.nativeimage.builder",
         ],
         "uses" : [

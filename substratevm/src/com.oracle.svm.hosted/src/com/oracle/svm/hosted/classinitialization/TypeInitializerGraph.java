@@ -24,7 +24,6 @@
  */
 package com.oracle.svm.hosted.classinitialization;
 
-import java.lang.annotation.Annotation;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.HashMap;
@@ -47,6 +46,7 @@ import com.oracle.svm.hosted.substitute.SubstitutionMethod;
 import com.oracle.svm.hosted.substitute.SubstitutionType;
 
 import jdk.vm.ci.meta.ResolvedJavaType;
+import org.graalvm.nativeimage.AnnotationAccess;
 
 /**
  * Keeps a type-hierarchy dependency graph for {@link AnalysisType}s from {@code universe}. Each
@@ -64,9 +64,9 @@ import jdk.vm.ci.meta.ResolvedJavaType;
  * every load, store, call, and instantiation in the bytecode. These dependencies are collected in
  * {@link SVMHost#getInitializedClasses}.
  */
-public class TypeInitializerGraph {
+final class TypeInitializerGraph {
     private final SVMHost hostVM;
-    private ClassInitializationSupport classInitializationSupport;
+    private final ProvenSafeClassInitializationSupport classInitializationSupport;
 
     private enum Safety {
         SAFE,
@@ -79,9 +79,9 @@ public class TypeInitializerGraph {
     private final Map<AnalysisMethod, Safety> methodSafety = new HashMap<>();
     private final Collection<AnalysisMethod> methods;
 
-    TypeInitializerGraph(AnalysisUniverse universe) {
+    TypeInitializerGraph(ProvenSafeClassInitializationSupport classInitializationSupport, AnalysisUniverse universe) {
         hostVM = ((SVMHost) universe.hostVM());
-        classInitializationSupport = hostVM.getClassInitializationSupport();
+        this.classInitializationSupport = classInitializationSupport;
 
         universe.getTypes().forEach(this::addInitializer);
         universe.getTypes().forEach(this::addInitializerDependencies);
@@ -250,12 +250,7 @@ public class TypeInitializerGraph {
         boolean isSubstituted = false;
         if (rt instanceof SubstitutionType) {
             SubstitutionType substitutionType = (SubstitutionType) rt;
-            for (Annotation annotation : substitutionType.getAnnotations()) {
-                if (annotation instanceof Substitute || annotation instanceof Delete) {
-                    isSubstituted = true;
-                    break;
-                }
-            }
+            isSubstituted = AnnotationAccess.isAnnotationPresent(substitutionType, Substitute.class) || AnnotationAccess.isAnnotationPresent(substitutionType, Delete.class);
         }
         types.put(t, isSubstituted ? Safety.UNSAFE : initialTypeInitializerSafety(t));
         dependencies.put(t, new HashSet<>());

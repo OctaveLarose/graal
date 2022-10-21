@@ -41,6 +41,7 @@ import org.junit.Test;
 import com.oracle.truffle.api.CompilerDirectives;
 import com.oracle.truffle.api.CompilerDirectives.CompilationFinal;
 import com.oracle.truffle.api.CompilerDirectives.TruffleBoundary;
+import com.oracle.truffle.api.HostCompilerDirectives;
 import com.oracle.truffle.api.HostCompilerDirectives.BytecodeInterpreterSwitch;
 import com.oracle.truffle.api.nodes.ExplodeLoop;
 import com.oracle.truffle.api.nodes.ExplodeLoop.LoopExplosionKind;
@@ -64,17 +65,17 @@ public class HostInliningBytecodeInterpreterExampleTest extends GraalCompilerTes
 
         StructuredGraph graph = parseForCompile(method, options);
         try (DebugContext.Scope ds = graph.getDebug().scope("Testing", method, graph)) {
-            getBackend().getSuites().getDefaultSuites(options).getHighTier().apply(graph, getDefaultHighTierContext());
+            super.createSuites(options).getHighTier().apply(graph, getDefaultHighTierContext());
             for (InvokeNode invoke : graph.getNodes().filter(InvokeNode.class)) {
                 ResolvedJavaMethod invokedMethod = invoke.getTargetMethod();
                 String name = invokedMethod.getName();
                 Assert.assertTrue(name, name.equals("traceTransferToInterpreter") || name.equals("truffleBoundary") || name.equals("protectedByInIntepreter") || name.equals("recursive") ||
-                                name.equals("execute") || name.equals("shouldNotReachHere") || name.equals("dominatedByTransferToInterpreter"));
+                                name.equals("execute") || name.equals("shouldNotReachHere") || name.equals("dominatedByTransferToInterpreter") || name.equals("inliningCutoff"));
             }
         }
     }
 
-    static final int BYTECODES = 7;
+    static final int BYTECODES = 8;
 
     @Override
     protected BasePhase<HighTierContext> createInliningPhase(CanonicalizerPhase canonicalizer) {
@@ -144,6 +145,9 @@ public class HostInliningBytecodeInterpreterExampleTest extends GraalCompilerTes
                             polymorphic[y].execute();
                         }
                         break;
+                    case 7:
+                        inliningCutoff();
+                        break;
                     default:
                         // propagates transferToInterpeter from within the call
                         throw CompilerDirectives.shouldNotReachHere();
@@ -159,6 +163,10 @@ public class HostInliningBytecodeInterpreterExampleTest extends GraalCompilerTes
         }
 
         private void dominatedByTransferToInterpreter() {
+        }
+
+        @HostCompilerDirectives.InliningCutoff
+        private void inliningCutoff() {
         }
 
         private void recursive(int i) {

@@ -24,11 +24,10 @@
  */
 package com.oracle.svm.core.graal.meta;
 
-import static org.graalvm.word.LocationIdentity.any;
-
 import java.util.HashMap;
 import java.util.Map;
 
+import org.graalvm.compiler.core.common.memory.MemoryOrderMode;
 import org.graalvm.compiler.core.common.spi.ForeignCallsProvider;
 import org.graalvm.compiler.core.common.spi.MetaAccessExtensionProvider;
 import org.graalvm.compiler.core.common.type.AbstractObjectStamp;
@@ -71,6 +70,7 @@ import org.graalvm.nativeimage.Platforms;
 import com.oracle.svm.core.StaticFieldsSupport;
 import com.oracle.svm.core.config.ConfigurationValues;
 import com.oracle.svm.core.config.ObjectLayout;
+import com.oracle.svm.core.graal.code.SubstrateBackend;
 import com.oracle.svm.core.graal.nodes.FloatingWordCastNode;
 import com.oracle.svm.core.graal.nodes.LoweredDeadEndNode;
 import com.oracle.svm.core.graal.nodes.SubstrateCompressionNode;
@@ -165,8 +165,7 @@ public abstract class SubstrateBasicLoweringProvider extends DefaultJavaLowering
          */
         Stamp methodStamp = SubstrateMethodPointerStamp.methodNonNull();
         AddressNode address = createOffsetAddress(graph, hub, vtableEntryOffset);
-        ReadNode methodPointer = graph.add(new ReadNode(address, any(), methodStamp, BarrierType.NONE));
-        return methodPointer;
+        return graph.add(new ReadNode(address, SubstrateBackend.getVTableIdentity(), methodStamp, BarrierType.NONE, MemoryOrderMode.PLAIN));
     }
 
     @Override
@@ -184,7 +183,7 @@ public abstract class SubstrateBasicLoweringProvider extends DefaultJavaLowering
     private static ValueNode maybeUncompress(ValueNode node) {
         Stamp stamp = node.stamp(NodeView.DEFAULT);
         if (stamp instanceof NarrowOopStamp) {
-            return SubstrateCompressionNode.uncompress(node, ((NarrowOopStamp) stamp).getEncoding());
+            return SubstrateCompressionNode.uncompress(node.graph(), node, ((NarrowOopStamp) stamp).getEncoding());
         }
         return node;
     }
@@ -201,6 +200,18 @@ public abstract class SubstrateBasicLoweringProvider extends DefaultJavaLowering
     protected ValueNode createReadHub(StructuredGraph graph, ValueNode object, LoweringTool tool) {
         if (tool.getLoweringStage() != LoweringTool.StandardLoweringStage.LOW_TIER) {
             return graph.unique(new LoadHubNode(tool.getStampProvider(), object));
+        }
+
+        if (object.isConstant() && !object.asJavaConstant().isNull()) {
+            /*
+             * Special case: insufficient canonicalization was run since the last lowering, if we
+             * are loading the hub from a constant we want to still fold it.
+             */
+            Stamp loadHubStamp = tool.getStampProvider().createHubStamp(((ObjectStamp) object.stamp(NodeView.DEFAULT)));
+            ValueNode synonym = LoadHubNode.findSynonym(object, loadHubStamp, tool.getMetaAccess(), tool.getConstantReflection());
+            if (synonym != null) {
+                return synonym;
+            }
         }
 
         GraalError.guarantee(!object.isConstant() || object.asJavaConstant().isNull(), "Object should either not be a constant or the null constant %s", object);
@@ -233,7 +244,7 @@ public abstract class SubstrateBasicLoweringProvider extends DefaultJavaLowering
     }
 
     @Override
-    public FieldLocationIdentity fieldLocationIdentity(ResolvedJavaField field) {
+    public FieldLocationIdentity overrideFieldLocationIdentity(FieldLocationIdentity field) {
         return new SubstrateFieldLocationIdentity(field);
     }
 

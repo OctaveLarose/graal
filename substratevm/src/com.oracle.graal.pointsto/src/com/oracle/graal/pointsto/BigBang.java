@@ -28,10 +28,10 @@ import java.io.PrintWriter;
 import java.util.List;
 import java.util.function.Function;
 
-import com.oracle.graal.pointsto.util.CompletionExecutor;
 import org.graalvm.compiler.api.replacements.SnippetReflectionProvider;
 import org.graalvm.compiler.debug.DebugContext;
 import org.graalvm.compiler.debug.DebugHandlersFactory;
+import org.graalvm.compiler.nodes.spi.Replacements;
 import org.graalvm.compiler.options.OptionValues;
 
 import com.oracle.graal.pointsto.api.HostVM;
@@ -42,16 +42,16 @@ import com.oracle.graal.pointsto.meta.AnalysisType;
 import com.oracle.graal.pointsto.meta.AnalysisType.UsageKind;
 import com.oracle.graal.pointsto.meta.AnalysisUniverse;
 import com.oracle.graal.pointsto.meta.HostedProviders;
+import com.oracle.graal.pointsto.util.CompletionExecutor;
 
 import jdk.vm.ci.code.BytecodePosition;
 import jdk.vm.ci.meta.ConstantReflectionProvider;
-import org.graalvm.compiler.nodes.spi.Replacements;
 
 /**
  * Central static analysis interface that groups together the functionality of reachability analysis
  * and heap scanning and adds utility methods and lifecycle hooks that should be used to query and
  * change the state of the analysis.
- * 
+ *
  * In long term, all mutable accesses that change the state of the analysis should go through this
  * interface.
  *
@@ -72,11 +72,6 @@ public interface BigBang extends ReachabilityAnalysis, HeapScanning {
     HostedProviders getProviders();
 
     List<DebugHandlersFactory> getDebugHandlerFactories();
-
-    /**
-     * Prints all analysis timers.
-     */
-    void printTimers();
 
     /**
      * Prints more detailed information about all analysis timers.
@@ -122,6 +117,8 @@ public interface BigBang extends ReachabilityAnalysis, HeapScanning {
     }
 
     void postTask(CompletionExecutor.DebugContextRunnable task);
+
+    boolean executorIsStarted();
 
     void initializeMetaData(AnalysisType type);
 

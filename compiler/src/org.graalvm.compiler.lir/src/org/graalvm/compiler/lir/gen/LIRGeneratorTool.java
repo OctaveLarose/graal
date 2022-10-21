@@ -24,9 +24,12 @@
  */
 package org.graalvm.compiler.lir.gen;
 
+import java.util.EnumSet;
+
 import org.graalvm.compiler.asm.VectorSize;
 import org.graalvm.compiler.core.common.CompressEncoding;
 import org.graalvm.compiler.core.common.LIRKind;
+import org.graalvm.compiler.core.common.Stride;
 import org.graalvm.compiler.core.common.calc.Condition;
 import org.graalvm.compiler.core.common.cfg.AbstractBlockBase;
 import org.graalvm.compiler.core.common.memory.MemoryOrderMode;
@@ -123,22 +126,22 @@ public interface LIRGeneratorTool extends DiagnosticLIRGeneratorTool, ValueKindF
     /**
      * Emit an atomic read-and-add instruction.
      *
+     * @param accessKind the access kind for the value to be written
      * @param address address of the value to be read and written
-     * @param valueKind the access kind for the value to be written
      * @param delta the value to be added
      */
-    default Value emitAtomicReadAndAdd(Value address, ValueKind<?> valueKind, Value delta) {
+    default Value emitAtomicReadAndAdd(LIRKind accessKind, Value address, Value delta) {
         throw GraalError.unimplemented();
     }
 
     /**
      * Emit an atomic read-and-write instruction.
      *
+     * @param accessKind the access kind for the value to be written
      * @param address address of the value to be read and written
-     * @param valueKind the access kind for the value to be written
      * @param newValue the new value to be written
      */
-    default Value emitAtomicReadAndWrite(Value address, ValueKind<?> valueKind, Value newValue) {
+    default Value emitAtomicReadAndWrite(LIRKind accessKind, Value address, Value newValue) {
         throw GraalError.unimplemented();
     }
 
@@ -203,70 +206,78 @@ public interface LIRGeneratorTool extends DiagnosticLIRGeneratorTool, ValueKindF
     Variable emitByteSwap(Value operand);
 
     @SuppressWarnings("unused")
-    default Variable emitArrayCompareTo(JavaKind kind1, JavaKind kind2, int array1BaseOffset, int array2BaseOffset, Value array1, Value array2, Value length1, Value length2) {
+    default Variable emitArrayCompareTo(Stride strideA, Stride strideB, EnumSet<?> runtimeCheckedCPUFeatures, Value arrayA, Value lengthA, Value arrayB, Value lengthB) {
         throw GraalError.unimplemented("String.compareTo substitution is not implemented on this architecture");
     }
 
     @SuppressWarnings("unused")
-    default Variable emitArrayRegionCompareTo(Value arrayA, Value offsetA, Value arrayB, Value offsetB, Value length, Value stride) {
+    default Variable emitArrayRegionCompareTo(EnumSet<?> runtimeCheckedCPUFeatures,
+                    Value arrayA, Value offsetA, Value arrayB, Value offsetB, Value length, Value dynamicStrides) {
         throw GraalError.unimplemented("String.compareTo substitution is not implemented on this architecture");
     }
 
     @SuppressWarnings("unused")
-    default Variable emitArrayRegionCompareTo(JavaKind strideA, JavaKind strideB, Value arrayA, Value offsetA, Value arrayB, Value offsetB, Value length) {
+    default Variable emitArrayRegionCompareTo(Stride strideA, Stride strideB, EnumSet<?> runtimeCheckedCPUFeatures,
+                    Value arrayA, Value offsetA, Value arrayB, Value offsetB, Value length) {
         throw GraalError.unimplemented("String.compareTo substitution is not implemented on this architecture");
     }
 
     @SuppressWarnings("unused")
-    default Variable emitArrayEquals(JavaKind kind, int array1BaseOffset, int array2BaseOffset, Value array1, Value array2, Value length) {
+    default Variable emitVectorizedMismatch(EnumSet<?> runtimeCheckedCPUFeatures, Value arrayA, Value arrayB, Value length, Value stride) {
+        throw GraalError.unimplemented("vectorizedMismatch substitution is not implemented on this architecture");
+    }
+
+    @SuppressWarnings("unused")
+    default Variable emitArrayEquals(JavaKind commonElementKind, EnumSet<?> runtimeCheckedCPUFeatures,
+                    Value arrayA, Value offsetA, Value arrayB, Value offsetB, Value length) {
         throw GraalError.unimplemented("Array.equals substitution is not implemented on this architecture");
     }
 
     @SuppressWarnings("unused")
-    default Variable emitArrayEquals(int array1BaseOffset, int array2BaseOffset, Value array1, Value offset1, Value array2, Value offset2, Value length, Value stride) {
-        throw GraalError.unimplemented("Array.equals with offset substitution is not implemented on this architecture");
-    }
-
-    @SuppressWarnings("unused")
-    default Variable emitArrayEquals(JavaKind kind, int array1BaseOffset, int array2BaseOffset, Value array1, Value offset1, Value array2, Value offset2, Value length) {
-        throw GraalError.unimplemented("Array.equals with offset substitution is not implemented on this architecture");
-    }
-
-    @SuppressWarnings("unused")
-    default Variable emitArrayEquals(JavaKind kind1, JavaKind kind2, int array1BaseOffset, int array2BaseOffset, Value array1, Value offset1, Value array2, Value offset2, Value length) {
+    default Variable emitArrayEquals(Stride strideA, Stride strideB, EnumSet<?> runtimeCheckedCPUFeatures,
+                    Value arrayA, Value offsetA, Value arrayB, Value offsetB, Value length) {
         throw GraalError.unimplemented("Array.equals with different types with offset substitution is not implemented on this architecture");
     }
 
     @SuppressWarnings("unused")
-    default Variable emitArrayEquals(int array1BaseOffset, int array2BaseOffset, int maskBaseOffset,
-                    Value array1, Value offset1, Value array2, Value offset2, Value mask, Value length, Value stride) {
+    default Variable emitArrayEqualsDynamicStrides(EnumSet<?> runtimeCheckedCPUFeatures,
+                    Value arrayA, Value offsetA, Value arrayB, Value offsetB, Value length, Value dynamicStrides) {
         throw GraalError.unimplemented("Array.equals with different types with offset substitution is not implemented on this architecture");
     }
 
     @SuppressWarnings("unused")
-    default Variable emitArrayEquals(JavaKind kind1, JavaKind kind2, JavaKind kindMask, int array1BaseOffset, int array2BaseOffset, int maskBaseOffset,
-                    Value array1, Value offset1, Value array2, Value offset2, Value mask, Value length) {
+    default Variable emitArrayEqualsWithMask(Stride strideA, Stride strideB, Stride strideMask, EnumSet<?> runtimeCheckedCPUFeatures,
+                    Value arrayA, Value offsetA, Value arrayB, Value offsetB, Value mask, Value length) {
         throw GraalError.unimplemented("Array.equals with different types with offset substitution is not implemented on this architecture");
     }
 
     @SuppressWarnings("unused")
-    default void emitArrayCopyWithConversion(JavaKind strideSrc, JavaKind strideDst, Value arraySrc, Value offsetSrc, Value arrayDst, Value offsetDst, Value length) {
+    default Variable emitArrayEqualsWithMaskDynamicStrides(EnumSet<?> runtimeCheckedCPUFeatures,
+                    Value arrayA, Value offsetA, Value arrayB, Value offsetB, Value mask, Value length, Value dynamicStrides) {
+        throw GraalError.unimplemented("Array.equals with different types with offset substitution is not implemented on this architecture");
+    }
+
+    @SuppressWarnings("unused")
+    default void emitArrayCopyWithConversion(Stride strideSrc, Stride strideDst, EnumSet<?> runtimeCheckedCPUFeatures,
+                    Value arraySrc, Value offsetSrc, Value arrayDst, Value offsetDst, Value length) {
         throw GraalError.unimplemented("Array.copy with variable stride substitution is not implemented on this architecture");
     }
 
     @SuppressWarnings("unused")
-    default void emitArrayCopyWithConversion(Value arraySrc, Value offsetSrc, Value arrayDst, Value offsetDst, Value length, Value stride) {
+    default void emitArrayCopyWithConversion(EnumSet<?> runtimeCheckedCPUFeatures,
+                    Value arraySrc, Value offsetSrc, Value arrayDst, Value offsetDst, Value length, Value dynamicStrides) {
         throw GraalError.unimplemented("Array.copy with variable stride substitution is not implemented on this architecture");
     }
 
     @SuppressWarnings("unused")
-    default Variable emitCalcStringAttributes(Object op, Value array, Value offset, Value length, boolean isValid) {
+    default Variable emitCalcStringAttributes(Object op, EnumSet<?> runtimeCheckedCPUFeatures,
+                    Value array, Value offset, Value length, boolean isValid) {
         throw GraalError.unimplemented("CalcStringAttributes substitution is not implemented on this architecture");
     }
 
     @SuppressWarnings("unused")
-    default Variable emitArrayIndexOf(int arrayBaseOffset, JavaKind valueKind, boolean findTwoConsecutive, boolean withMask, Value array, Value offset, Value length, Value fromIndex,
-                    Value... searchValues) {
+    default Variable emitArrayIndexOf(Stride stride, boolean findTwoConsecutive, boolean withMask, EnumSet<?> runtimeCheckedCPUFeatures,
+                    Value array, Value offset, Value length, Value fromIndex, Value... searchValues) {
         throw GraalError.unimplemented("String.indexOf substitution is not implemented on this architecture");
     }
 
@@ -281,12 +292,12 @@ public interface LIRGeneratorTool extends DiagnosticLIRGeneratorTool, ValueKindF
      * snippet.
      */
     @SuppressWarnings("unused")
-    default void emitStringLatin1Inflate(Value src, Value dst, Value len) {
+    default void emitStringLatin1Inflate(EnumSet<?> runtimeCheckedCPUFeatures, Value src, Value dst, Value len) {
         throw GraalError.unimplemented("StringLatin1.inflate substitution is not implemented on this architecture");
     }
 
     @SuppressWarnings("unused")
-    default Variable emitStringUTF16Compress(Value src, Value dst, Value len) {
+    default Variable emitStringUTF16Compress(EnumSet<?> runtimeCheckedCPUFeatures, Value src, Value dst, Value len) {
         throw GraalError.unimplemented("StringUTF16.compress substitution is not implemented on this architecture");
     }
 
@@ -296,12 +307,37 @@ public interface LIRGeneratorTool extends DiagnosticLIRGeneratorTool, ValueKindF
     }
 
     @SuppressWarnings("unused")
-    default Variable emitEncodeArray(Value src, Value dst, Value length, CharsetName charset) {
+    default Variable emitEncodeArray(EnumSet<?> runtimeCheckedCPUFeatures, Value src, Value dst, Value length, CharsetName charset) {
         throw GraalError.unimplemented("No specialized implementation available");
     }
 
     @SuppressWarnings("unused")
-    default Variable emitHasNegatives(Value array, Value length) {
+    default Variable emitHasNegatives(EnumSet<?> runtimeCheckedCPUFeatures, Value array, Value length) {
+        throw GraalError.unimplemented("No specialized implementation available");
+    }
+
+    @SuppressWarnings("unused")
+    default void emitAESEncrypt(Value from, Value to, Value key) {
+        throw GraalError.unimplemented("No specialized implementation available");
+    }
+
+    @SuppressWarnings("unused")
+    default void emitAESDecrypt(Value from, Value to, Value key) {
+        throw GraalError.unimplemented("No specialized implementation available");
+    }
+
+    @SuppressWarnings("unused")
+    default Variable emitCTRAESCrypt(Value inAddr, Value outAddr, Value kAddr, Value counterAddr, Value len, Value encryptedCounterAddr, Value usedPtr) {
+        throw GraalError.unimplemented("No specialized implementation available");
+    }
+
+    @SuppressWarnings("unused")
+    default void emitGHASHProcessBlocks(Value state, Value hashSubkey, Value data, Value blocks) {
+        throw GraalError.unimplemented("No specialized implementation available");
+    }
+
+    @SuppressWarnings("unused")
+    default void emitBigIntegerMultiplyToLen(Value x, Value xlen, Value y, Value ylen, Value z, Value zlen) {
         throw GraalError.unimplemented("No specialized implementation available");
     }
 
@@ -383,7 +419,8 @@ public interface LIRGeneratorTool extends DiagnosticLIRGeneratorTool, ValueKindF
     /**
      * Returns the maximum size of vector registers.
      */
-    default VectorSize getMaxVectorSize() {
+    @SuppressWarnings("unused")
+    default VectorSize getMaxVectorSize(EnumSet<?> runtimeCheckedCPUFeatures) {
         throw GraalError.unimplemented("Max vector size is not specified on this architecture");
     }
 }

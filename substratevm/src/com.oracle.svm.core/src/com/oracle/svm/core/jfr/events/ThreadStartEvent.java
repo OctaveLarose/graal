@@ -27,7 +27,7 @@ package com.oracle.svm.core.jfr.events;
 import org.graalvm.nativeimage.IsolateThread;
 import org.graalvm.nativeimage.StackValue;
 
-import com.oracle.svm.core.annotate.Uninterruptible;
+import com.oracle.svm.core.Uninterruptible;
 import com.oracle.svm.core.jfr.JfrEvent;
 import com.oracle.svm.core.jfr.JfrNativeEventWriter;
 import com.oracle.svm.core.jfr.JfrNativeEventWriterData;
@@ -47,7 +47,7 @@ public class ThreadStartEvent {
             JfrNativeEventWriter.beginSmallEvent(data, JfrEvent.ThreadStart);
             JfrNativeEventWriter.putLong(data, JfrTicks.elapsedTicks());
             JfrNativeEventWriter.putEventThread(data);
-            JfrNativeEventWriter.putLong(data, svm.getStackTraceId(JfrEvent.ThreadStart.getId(), 0));
+            JfrNativeEventWriter.putLong(data, svm.getStackTraceId(JfrEvent.ThreadStart, 0));
             JfrNativeEventWriter.putThread(data, isolateThread);
             JfrNativeEventWriter.putLong(data, SubstrateJVM.getParentThreadId(isolateThread));
             JfrNativeEventWriter.endSmallEvent(data);

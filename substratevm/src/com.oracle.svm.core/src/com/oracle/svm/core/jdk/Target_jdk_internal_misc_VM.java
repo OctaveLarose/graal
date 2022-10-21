@@ -30,13 +30,15 @@ import org.graalvm.nativeimage.ImageSingletons;
 
 import com.oracle.svm.core.SubstrateOptions;
 import com.oracle.svm.core.annotate.Alias;
+import com.oracle.svm.core.annotate.AnnotateOriginal;
 import com.oracle.svm.core.annotate.Delete;
 import com.oracle.svm.core.annotate.InjectAccessors;
-import com.oracle.svm.core.annotate.NeverInline;
+import com.oracle.svm.core.NeverInline;
 import com.oracle.svm.core.annotate.RecomputeFieldValue;
 import com.oracle.svm.core.annotate.RecomputeFieldValue.Kind;
 import com.oracle.svm.core.annotate.Substitute;
 import com.oracle.svm.core.annotate.TargetClass;
+import com.oracle.svm.core.Uninterruptible;
 import com.oracle.svm.core.snippets.KnownIntrinsics;
 
 import jdk.internal.misc.Unsafe;
@@ -52,7 +54,8 @@ public final class Target_jdk_internal_misc_VM {
         return ImageSingletons.lookup(SystemPropertiesSupport.class).getSavedProperties().get(name);
     }
 
-    @Alias
+    @AnnotateOriginal
+    @Uninterruptible(reason = "Called from uninterruptible code.", mayBeInlined = true)
     public static native Thread.State toThreadState(int threadStatus);
 
     @Substitute

@@ -102,6 +102,19 @@ def _test_libgraal_basic(extra_vm_arguments):
     Tests basic libgraal execution by running a DaCapo benchmark, ensuring it has a 0 exit code
     and that the output for -DgraalShowConfiguration=info describes a libgraal execution.
     """
+
+    graalvm_home = mx_sdk_vm_impl.graalvm_home()
+    graalvm_jdk = mx.JDKConfig(graalvm_home)
+    jres = [graalvm_home]
+
+    if mx_sdk_vm.jlink_has_save_jlink_argfiles(graalvm_jdk) and mx_sdk_vm.jlink_has_copy_files(graalvm_jdk):
+        # Create a minimal image that should contain libgraal
+        libgraal_jre = abspath('libgraal-jre')
+        if exists(libgraal_jre):
+            mx.rmtree(libgraal_jre)
+        mx.run([join(graalvm_home, 'bin', 'jlink'), f'--output={libgraal_jre}', '--add-modules=java.base'])
+        jres.append(libgraal_jre)
+
     expect = r"Using compiler configuration '[^']+' provided by [\.\w]+ loaded from[ \w]* JVMCI native library"
     compiler_log_file = abspath('graal-compiler.log')
     args = ['-Dgraal.ShowConfiguration=info',
@@ -109,10 +122,11 @@ def _test_libgraal_basic(extra_vm_arguments):
             '-jar', mx.library('DACAPO').get_path(True), 'avrora', '-n', '1']
 
     # Verify execution via raw java launcher in `mx graalvm-home`.
-    try:
-        mx.run([join(mx_sdk_vm_impl.graalvm_home(), 'bin', 'java')] + args)
-    finally:
-        _check_compiler_log(compiler_log_file, expect)
+    for jre in jres:
+        try:
+            mx.run([join(jre, 'bin', 'java')] + args)
+        finally:
+            _check_compiler_log(compiler_log_file, expect)
 
     # Verify execution via `mx vm`.
     import mx_compiler
@@ -157,7 +171,11 @@ def _test_libgraal_fatal_error_handling():
                     mx.abort('Expected "Fatal error: Forced crash" to be in contents of ' + hs_err + ':' + linesep + contents)
             else:
                 if 'Fatal error in JVMCI' not in contents:
-                    mx.abort('Expected "Fatal error in JVMCI" to be in contents of ' + hs_err + ':' + linesep + contents)
+                    if 'SubstrateDiagnostics$DumpThreads_printDiagnostics' in contents:
+                        # GR-39833 workaround
+                        pass
+                    else:
+                        mx.abort('Expected "Fatal error in JVMCI" to be in contents of ' + hs_err + ':' + linesep + contents)
 
         if 'JVMCINativeLibraryErrorFile' in out.data and not seen_libjvmci_log:
             mx.abort('Expected a file matching "hs_err_pid*_libjvmci.log" in test directory. Entries found=' + str(listdir(latest_scratch_dir)))
@@ -241,8 +259,6 @@ def _test_libgraal_truffle(extra_vm_arguments):
         "-Dpolyglot.engine.CompileImmediately=true",
         "-Dpolyglot.engine.BackgroundCompilation=false",
         "-Dpolyglot.engine.CompilationFailureAction=Throw",
-        "-Dpolyglot.engine.TraceCompilation=true",
-        "-Dpolyglot.log.file={0}".format(compiler_log_file),
         "-Dgraalvm.locatorDisabled=true",
         "truffle"])
     if exists(compiler_log_file):
@@ -269,23 +285,23 @@ def gate_body(args, tasks):
             if libgraal_location is None:
                 mx.warn("Skipping libgraal tests: no library enabled in the LibGraal component")
             else:
-                extra_vm_arguments = ['-XX:+UseJVMCICompiler', '-XX:+UseJVMCINativeLibrary', '-XX:JVMCILibPath=' + dirname(libgraal_location)]
+                extra_vm_arguments = ['-XX:+UseJVMCICompiler', '-XX:+UseJVMCINativeLibrary', '-XX:JVMCILibPath=' + dirname(libgraal_location), '-XX:JVMCIThreadsPerNativeLibraryRuntime=1']
                 if args.extra_vm_argument:
                     extra_vm_arguments += args.extra_vm_argument
 
                 # run avrora on the GraalVM binary itself
-                with Task('LibGraal Compiler:Basic', tasks, tags=[VmGateTasks.libgraal]) as t:
+                with Task('LibGraal Compiler:Basic', tasks, tags=[VmGateTasks.libgraal], report='compiler') as t:
                     if t: _test_libgraal_basic(extra_vm_arguments)
-                with Task('LibGraal Compiler:FatalErrorHandling', tasks, tags=[VmGateTasks.libgraal]) as t:
+                with Task('LibGraal Compiler:FatalErrorHandling', tasks, tags=[VmGateTasks.libgraal], report='compiler') as t:
                     if t: _test_libgraal_fatal_error_handling()
 
-                with Task('LibGraal Compiler:CTW', tasks, tags=[VmGateTasks.libgraal]) as t:
+                with Task('LibGraal Compiler:CTW', tasks, tags=[VmGateTasks.libgraal], report='compiler') as t:
                     if t: _test_libgraal_ctw(extra_vm_arguments)
 
                 import mx_compiler
                 mx_compiler.compiler_gate_benchmark_runner(tasks, extra_vm_arguments, prefix='LibGraal Compiler:')
 
-                with Task('LibGraal Truffle:unittest', tasks, tags=[VmGateTasks.libgraal]) as t:
+                with Task('LibGraal Truffle:unittest', tasks, tags=[VmGateTasks.libgraal], report='compiler') as t:
                     if t: _test_libgraal_truffle(extra_vm_arguments)
         else:
             mx.warn("Skipping libgraal tests: component not enabled")
@@ -377,7 +393,7 @@ def gate_sulong(tasks):
 def gate_python(tasks):
     with Task('Python', tasks, tags=[VmGateTasks.python]) as t:
         if t:
-            python_svm_image_path = join(mx_sdk_vm_impl.graalvm_output(), 'bin', 'graalpython')
+            python_svm_image_path = join(mx_sdk_vm_impl.graalvm_output(), 'bin', 'graalpy')
             python_suite = mx.suite("graalpython")
             python_suite.extensions.run_python_unittests(python_svm_image_path)
 

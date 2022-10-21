@@ -24,6 +24,7 @@
  */
 package com.oracle.svm.core.jfr;
 
+import org.graalvm.compiler.serviceprovider.JavaVersionUtil;
 import org.graalvm.nativeimage.CurrentIsolate;
 import org.graalvm.nativeimage.IsolateThread;
 import org.graalvm.nativeimage.Platform;
@@ -34,7 +35,7 @@ import org.graalvm.word.WordFactory;
 
 import com.oracle.svm.core.SubstrateUtil;
 import com.oracle.svm.core.UnmanagedMemoryUtil;
-import com.oracle.svm.core.annotate.Uninterruptible;
+import com.oracle.svm.core.Uninterruptible;
 import com.oracle.svm.core.jfr.events.ExecutionSampleEvent;
 import com.oracle.svm.core.jfr.events.ThreadEndEvent;
 import com.oracle.svm.core.jfr.events.ThreadStartEvent;
@@ -48,15 +49,13 @@ import com.oracle.svm.core.threadlocal.FastThreadLocalObject;
 import com.oracle.svm.core.threadlocal.FastThreadLocalWord;
 import com.oracle.svm.core.util.VMError;
 
-import jdk.jfr.internal.EventWriter;
-
 /**
  * This class holds various JFR-specific thread local values.
  *
  * Each thread uses both a Java and a native {@link JfrBuffer}:
  * <ul>
  * <li>The Java buffer is accessed by JFR events that are implemented as Java classes and written
- * using {@link EventWriter}.</li>
+ * using {@code EventWriter}.</li>
  * <li>The native buffer is accessed when {@link JfrNativeEventWriter} is used to write an
  * event.</li>
  * </ul>
@@ -107,7 +106,6 @@ public class JfrThreadLocal implements ThreadListener {
     @Uninterruptible(reason = "Accesses a JFR buffer.")
     @Override
     public void afterThreadExit(IsolateThread isolateThread, Thread javaThread) {
-
         // Emit ThreadEnd event after thread.run() finishes.
         ThreadEndEvent.emit(isolateThread);
 
@@ -147,6 +145,11 @@ public class JfrThreadLocal implements ThreadListener {
         return parentThreadId.get(isolateThread);
     }
 
+    @Uninterruptible(reason = "Called from uninterruptible code.", mayBeInlined = true)
+    public long getThreadLocalBufferSize() {
+        return threadLocalBufferSize;
+    }
+
     public Target_jdk_jfr_internal_EventWriter getEventWriter() {
         return javaEventWriter.get();
     }
@@ -167,8 +170,13 @@ public class JfrThreadLocal implements ThreadListener {
         long startPos = buffer.getPos().rawValue();
         long maxPos = JfrBufferAccess.getDataEnd(buffer).rawValue();
         long addressOfPos = JfrBufferAccess.getAddressOfPos(buffer).rawValue();
-        long jfrThreadId = SubstrateJVM.get().getThreadId(CurrentIsolate.getCurrentThread());
-        Target_jdk_jfr_internal_EventWriter result = new Target_jdk_jfr_internal_EventWriter(startPos, maxPos, addressOfPos, jfrThreadId, true);
+        long jfrThreadId = SubstrateJVM.getThreadId(CurrentIsolate.getCurrentThread());
+        Target_jdk_jfr_internal_EventWriter result;
+        if (JavaVersionUtil.JAVA_SPEC >= 19) {
+            result = new Target_jdk_jfr_internal_EventWriter(startPos, maxPos, addressOfPos, jfrThreadId, true, false);
+        } else {
+            result = new Target_jdk_jfr_internal_EventWriter(startPos, maxPos, addressOfPos, jfrThreadId, true);
+        }
         javaEventWriter.set(result);
 
         return result;

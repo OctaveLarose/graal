@@ -61,6 +61,8 @@ import java.util.Set;
 import java.util.WeakHashMap;
 import java.util.concurrent.ConcurrentHashMap;
 
+import com.oracle.truffle.api.frame.FrameSlotKind;
+import com.oracle.truffle.api.frame.MaterializedFrame;
 import org.junit.Assert;
 
 import com.oracle.truffle.api.CallTarget;
@@ -251,6 +253,13 @@ public class InstrumentationTestLanguage extends TruffleLanguage<InstrumentConte
     }
 
     private CallTarget lastParsed;
+
+    private static FrameDescriptor getDefaultFrameDescriptor() {
+        FrameDescriptor.Builder builder = FrameDescriptor.newBuilder();
+        builder.addSlot(FrameSlotKind.Static, null, null);
+        builder.addSlot(FrameSlotKind.Int, null, null);
+        return builder.build();
+    }
 
     public static CallTarget getLastParsedCalltarget() {
         return InstrumentationTestLanguage.get(null).lastParsed;
@@ -636,7 +645,7 @@ public class InstrumentationTestLanguage extends TruffleLanguage<InstrumentConte
         }
 
         protected InstrumentationTestRootNode(InstrumentationTestLanguage lang, String name, SourceSection sourceSection, RootCallTarget afterTarget, BaseNode... expressions) {
-            super(lang);
+            super(lang, getDefaultFrameDescriptor());
             this.name = name;
             this.sourceSection = sourceSection;
             this.afterTarget = afterTarget;
@@ -888,8 +897,12 @@ public class InstrumentationTestLanguage extends TruffleLanguage<InstrumentConte
         }
 
         @ExportMessage
+        final Object getScope(Frame frame, boolean nodeEnter) {
+            return getScopeSlowPath(frame != null ? frame.materialize() : null, nodeEnter);
+        }
+
         @TruffleBoundary
-        final Object getScope(Frame frame, @SuppressWarnings("unused") boolean nodeEnter) {
+        private Object getScopeSlowPath(MaterializedFrame frame, boolean nodeEnter) {
             // Delegates to the default implementation
             if (this instanceof FunctionRootNode) {
                 // has RootTag, is at function root, provide arguments
@@ -1741,7 +1754,7 @@ public class InstrumentationTestLanguage extends TruffleLanguage<InstrumentConte
 
         @TruffleBoundary
         private static TruffleContext createInnerContext() {
-            return InstrumentContext.get(null).env.newContextBuilder().build();
+            return InstrumentContext.get(null).env.newInnerContextBuilder().inheritAllAccess(true).initializeCreatorContext(true).build();
         }
     }
 

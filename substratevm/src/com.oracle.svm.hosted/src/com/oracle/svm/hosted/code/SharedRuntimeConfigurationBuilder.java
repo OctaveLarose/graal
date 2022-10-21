@@ -27,7 +27,6 @@ package com.oracle.svm.hosted.code;
 import java.util.EnumMap;
 import java.util.function.Function;
 
-import com.oracle.svm.hosted.HostedConfiguration;
 import org.graalvm.compiler.api.replacements.SnippetReflectionProvider;
 import org.graalvm.compiler.core.common.spi.ConstantFieldProvider;
 import org.graalvm.compiler.core.common.spi.ForeignCallsProvider;
@@ -43,6 +42,7 @@ import org.graalvm.compiler.phases.util.Providers;
 import org.graalvm.compiler.word.WordTypes;
 import org.graalvm.nativeimage.ImageSingletons;
 
+import com.oracle.graal.pointsto.infrastructure.UniverseMetaAccess;
 import com.oracle.svm.core.FrameAccess;
 import com.oracle.svm.core.SubstrateOptions;
 import com.oracle.svm.core.config.ConfigurationValues;
@@ -57,7 +57,8 @@ import com.oracle.svm.core.graal.meta.SubstrateRegisterConfig.ConfigKind;
 import com.oracle.svm.core.graal.meta.SubstrateSnippetReflectionProvider;
 import com.oracle.svm.core.graal.meta.SubstrateStampProvider;
 import com.oracle.svm.core.graal.word.SubstrateWordTypes;
-import com.oracle.svm.core.heap.Heap;
+import com.oracle.svm.core.heap.BarrierSetProvider;
+import com.oracle.svm.hosted.HostedConfiguration;
 import com.oracle.svm.hosted.SVMHost;
 import com.oracle.svm.hosted.c.NativeLibraries;
 import com.oracle.svm.hosted.classinitialization.ClassInitializationSupport;
@@ -65,13 +66,12 @@ import com.oracle.svm.hosted.classinitialization.ClassInitializationSupport;
 import jdk.vm.ci.code.CodeCacheProvider;
 import jdk.vm.ci.code.RegisterConfig;
 import jdk.vm.ci.meta.ConstantReflectionProvider;
-import jdk.vm.ci.meta.MetaAccessProvider;
 
 public abstract class SharedRuntimeConfigurationBuilder {
 
     protected final OptionValues options;
     protected final SVMHost hostVM;
-    protected final MetaAccessProvider metaAccess;
+    protected final UniverseMetaAccess metaAccess;
     protected RuntimeConfiguration runtimeConfig;
     protected WordTypes wordTypes;
     protected final Function<Providers, SubstrateBackend> backendProvider;
@@ -79,7 +79,7 @@ public abstract class SharedRuntimeConfigurationBuilder {
     protected final ClassInitializationSupport classInitializationSupport;
     protected final LoopsDataProvider originalLoopsDataProvider;
 
-    public SharedRuntimeConfigurationBuilder(OptionValues options, SVMHost hostVM, MetaAccessProvider metaAccess, Function<Providers, SubstrateBackend> backendProvider,
+    public SharedRuntimeConfigurationBuilder(OptionValues options, SVMHost hostVM, UniverseMetaAccess metaAccess, Function<Providers, SubstrateBackend> backendProvider,
                     NativeLibraries nativeLibraries, ClassInitializationSupport classInitializationSupport, LoopsDataProvider originalLoopsDataProvider) {
         this.options = options;
         this.hostVM = hostVM;
@@ -111,8 +111,8 @@ public abstract class SharedRuntimeConfigurationBuilder {
         SnippetReflectionProvider snippetReflection = createSnippetReflectionProvider();
         ForeignCallsProvider foreignCalls = createForeignCallsProvider(registerConfigs.get(ConfigKind.NORMAL));
         p = createProviders(null, constantReflection, constantFieldProvider, foreignCalls, null, null, stampProvider, snippetReflection, null, null, null);
-        BarrierSet barrierSet = ImageSingletons.lookup(Heap.class).createBarrierSet(metaAccess);
-        PlatformConfigurationProvider platformConfig = new SubstratePlatformConfigurationProvider(barrierSet);
+        BarrierSet barrierSet = ImageSingletons.lookup(BarrierSetProvider.class).createBarrierSet(metaAccess);
+        PlatformConfigurationProvider platformConfig = createPlatformConfigProvider(barrierSet);
         MetaAccessExtensionProvider metaAccessExtensionProvider = HostedConfiguration.instance().createCompilationMetaAccessExtensionProvider(metaAccess);
         p = createProviders(null, constantReflection, constantFieldProvider, foreignCalls, null, null, stampProvider, snippetReflection, platformConfig, metaAccessExtensionProvider, null);
         LoweringProvider lowerer = createLoweringProvider(p);
@@ -169,6 +169,10 @@ public abstract class SharedRuntimeConfigurationBuilder {
 
     protected LoweringProvider createLoweringProvider(Providers p) {
         return SubstrateLoweringProvider.createForRuntime(p.getMetaAccess(), p.getForeignCalls(), p.getPlatformConfigurationProvider(), p.getMetaAccessExtensionProvider());
+    }
+
+    protected SubstratePlatformConfigurationProvider createPlatformConfigProvider(BarrierSet barrierSet) {
+        return new SubstratePlatformConfigurationProvider(barrierSet);
     }
 
     protected abstract Replacements createReplacements(Providers p, SnippetReflectionProvider snippetReflection);

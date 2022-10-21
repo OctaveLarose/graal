@@ -24,15 +24,16 @@
  */
 package com.oracle.svm.hosted.jdk;
 
+import org.graalvm.compiler.serviceprovider.JavaVersionUtil;
 import org.graalvm.nativeimage.ImageSingletons;
 import org.graalvm.nativeimage.Platform;
-import org.graalvm.nativeimage.hosted.Feature;
 import org.graalvm.nativeimage.impl.RuntimeClassInitializationSupport;
 
-import com.oracle.svm.core.annotate.AutomaticFeature;
+import com.oracle.svm.core.feature.InternalFeature;
+import com.oracle.svm.core.feature.AutomaticallyRegisteredFeature;
 
-@AutomaticFeature
-public class JDKInitializationFeature implements Feature {
+@AutomaticallyRegisteredFeature
+public class JDKInitializationFeature implements InternalFeature {
     private static final String JDK_CLASS_REASON = "Core JDK classes are initialized at build time";
 
     @Override
@@ -54,6 +55,7 @@ public class JDKInitializationFeature implements Feature {
         rci.initializeAtBuildTime("java.text", JDK_CLASS_REASON);
         rci.initializeAtBuildTime("java.time", JDK_CLASS_REASON);
         rci.initializeAtBuildTime("java.util", JDK_CLASS_REASON);
+        rci.rerunInitialization("java.util.concurrent.SubmissionPublisher", "Executor service must be recomputed");
 
         rci.initializeAtBuildTime("javax.annotation.processing", JDK_CLASS_REASON);
         rci.initializeAtBuildTime("javax.lang.model", JDK_CLASS_REASON);
@@ -107,15 +109,17 @@ public class JDKInitializationFeature implements Feature {
         rci.initializeAtRunTime("com.sun.naming.internal.ResourceManager$AppletParameter", "Initializes AWT");
         rci.initializeAtBuildTime("java.awt.font.TextAttribute", "Required for sun.text.bidi.BidiBase.NumericShapings");
         rci.initializeAtBuildTime("java.awt.font.NumericShaper", "Required for sun.text.bidi.BidiBase.NumericShapings");
+        rci.initializeAtBuildTime("java.awt.font.JavaAWTFontAccessImpl", "Required for sun.text.bidi.BidiBase.NumericShapings");
 
         /* XML-related */
         rci.initializeAtBuildTime("com.sun.xml", JDK_CLASS_REASON);
         rci.initializeAtBuildTime("com.sun.org.apache", JDK_CLASS_REASON);
+        rci.initializeAtBuildTime("com.sun.org.slf4j.internal", JDK_CLASS_REASON);
 
         /* Security services */
         rci.initializeAtBuildTime("com.sun.crypto.provider", JDK_CLASS_REASON);
         rci.initializeAtBuildTime("com.sun.security.auth", JDK_CLASS_REASON);
-        rci.initializeAtBuildTime("com.sun.security.jgss", "Core JDK classes are initialized at build time for better performance");
+        rci.initializeAtBuildTime("com.sun.security.jgss", JDK_CLASS_REASON);
         rci.initializeAtBuildTime("com.sun.security.cert.internal.x509", JDK_CLASS_REASON);
         rci.initializeAtBuildTime("com.sun.security.ntlm", JDK_CLASS_REASON);
         rci.initializeAtBuildTime("com.sun.security.sasl", JDK_CLASS_REASON);
@@ -133,6 +137,7 @@ public class JDKInitializationFeature implements Feature {
         rci.initializeAtBuildTime("sun.security.internal.spec", JDK_CLASS_REASON);
         rci.initializeAtBuildTime("sun.security.jca", JDK_CLASS_REASON);
         rci.initializeAtBuildTime("sun.security.jgss", JDK_CLASS_REASON);
+        rci.initializeAtBuildTime("org.ietf.jgss.Oid", JDK_CLASS_REASON);
         rci.initializeAtBuildTime("org.ietf.jgss.GSSException", JDK_CLASS_REASON);
         rci.initializeAtBuildTime("org.ietf.jgss.GSSName", JDK_CLASS_REASON);
         rci.initializeAtBuildTime("sun.security.krb5", JDK_CLASS_REASON);
@@ -165,5 +170,9 @@ public class JDKInitializationFeature implements Feature {
         rci.rerunInitialization("java.lang.StrictMath$RandomNumberGeneratorHolder", "Contains random seeds");
 
         rci.rerunInitialization("jdk.internal.misc.InnocuousThread", "Contains a thread group INNOCUOUSTHREADGROUP.");
+
+        if (JavaVersionUtil.JAVA_SPEC >= 19) {
+            rci.rerunInitialization("sun.nio.ch.Poller", "Contains an InnocuousThread.");
+        }
     }
 }

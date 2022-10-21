@@ -42,13 +42,17 @@
 package com.oracle.truffle.api.strings.test;
 
 import static com.oracle.truffle.api.strings.TruffleString.Encoding.UTF_8;
+import static com.oracle.truffle.api.strings.test.TStringTestUtil.byteArray;
 
 import java.nio.charset.StandardCharsets;
 
+import org.graalvm.shadowed.org.jcodings.specific.UTF8Encoding;
 import org.junit.Assert;
+import org.junit.Assume;
 import org.junit.Test;
 
 import com.oracle.truffle.api.strings.TruffleString;
+import com.oracle.truffle.api.strings.TruffleStringIterator;
 
 public class TStringUTF8Tests extends TStringTestBase {
 
@@ -66,60 +70,109 @@ public class TStringUTF8Tests extends TStringTestBase {
     };
 
     private static final byte[][] INVALID = {
-                    TStringTestUtil.byteArray(0x80),
-                    TStringTestUtil.byteArray(0xc0, 0x80),
-                    TStringTestUtil.byteArray(0b11000000),
-                    TStringTestUtil.byteArray(0b11000000, 0x80, 0x80),
-                    TStringTestUtil.byteArray(0b11100000),
-                    TStringTestUtil.byteArray(0b11100000, 0x80),
-                    TStringTestUtil.byteArray(0b11100000, 0x80, 0x80, 0x80),
-                    TStringTestUtil.byteArray(0b11110000),
-                    TStringTestUtil.byteArray(0b11110000, 0x80, 0x80),
-                    TStringTestUtil.byteArray(0b11110000, 0x80, 0x80, 0x80, 0x80),
-                    TStringTestUtil.byteArray(0b11111000),
-                    TStringTestUtil.byteArray(0b11111000, 0x80, 0x80, 0x80, 0x80),
-                    TStringTestUtil.byteArray(0b11111100),
-                    TStringTestUtil.byteArray(0b11111100, 0x80, 0x80, 0x80, 0x80, 0x80),
-                    TStringTestUtil.byteArray(0b11111110),
-                    TStringTestUtil.byteArray(0b11111111),
-                    TStringTestUtil.byteArray(0xf4, 0x90, 0x80, 0x80),
-                    TStringTestUtil.byteArray(0xed, 0xb0, 0x80),
-                    TStringTestUtil.byteArray(0xed, 0xbf, 0xbf),
-                    TStringTestUtil.byteArray(0xed, 0xa0, 0x80),
-                    TStringTestUtil.byteArray(0xed, 0xaf, 0xbf),
-                    TStringTestUtil.byteArray(0xc0, 0xbf),
+                    byteArray(0x80),
+                    byteArray(0xc0, 0x80),
+                    byteArray(0b11000000),
+                    byteArray(0b11000000, 0x80, 0x80),
+                    byteArray(0b11100000),
+                    byteArray(0b11100000, 0x80),
+                    byteArray(0b11100000, 0x80, 0x80, 0x80),
+                    byteArray(0b11110000),
+                    byteArray(0b11110000, 0x80, 0x80),
+                    byteArray(0b11110000, 0x80, 0x80, 0x80, 0x80),
+                    byteArray(0b11111000),
+                    byteArray(0b11111000, 0x80, 0x80, 0x80, 0x80),
+                    byteArray(0b11111100),
+                    byteArray(0b11111100, 0x80, 0x80, 0x80, 0x80, 0x80),
+                    byteArray(0b11111110),
+                    byteArray(0b11111111),
+                    byteArray(0xf4, 0x90, 0x80, 0x80),
+                    byteArray(0xed, 0xb0, 0x80),
+                    byteArray(0xed, 0xbf, 0xbf),
+                    byteArray(0xed, 0xa0, 0x80),
+                    byteArray(0xed, 0xaf, 0xbf),
+                    byteArray(0xc0, 0xbf),
     };
 
     private static byte[] utf8Encode(int codepoint) {
         return new StringBuilder().appendCodePoint(codepoint).toString().getBytes(StandardCharsets.UTF_8);
     }
 
+    private static TruffleString asTString(byte[] arr) {
+        return asTString(arr, arr.length);
+    }
+
+    private static TruffleString asTString(byte[] arr, int length) {
+        return TruffleString.fromByteArrayUncached(arr, 0, length, UTF_8, false);
+    }
+
     @Test
     public void testValid() {
         for (byte[] arr : VALID) {
-            Assert.assertTrue(TStringTestUtil.hex(arr), TruffleString.fromByteArrayUncached(arr, 0, arr.length, UTF_8, false).isValidUncached(UTF_8));
+            Assert.assertTrue(TStringTestUtil.hex(arr), asTString(arr).isValidUncached(UTF_8));
         }
     }
 
     @Test
     public void testInvalid() {
         for (byte[] arr : INVALID) {
-            Assert.assertFalse(TStringTestUtil.hex(arr), TruffleString.fromByteArrayUncached(arr, 0, arr.length, UTF_8, false).isValidUncached(UTF_8));
+            Assert.assertFalse(TStringTestUtil.hex(arr), asTString(arr).isValidUncached(UTF_8));
+        }
+    }
+
+    @Test
+    public void testByteLengthOfInvalidCodePoint() {
+        for (byte[] arr : INVALID) {
+            checkByteLengthOfCodePoint(arr, arr.length);
+        }
+    }
+
+    @Test
+    public void testByteLengthOfCodePointExhaustive() {
+        // Disabled by default because this test takes almost 10 minutes.
+        Assume.assumeTrue(false);
+        byte[] arr = new byte[4];
+        for (long i = 0; i <= 0xff_ff_ff_ffL; i++) {
+            arr[0] = (byte) (i & 0xff);
+            arr[1] = (byte) ((i >> 8) & 0xff);
+            arr[2] = (byte) ((i >> 16) & 0xff);
+            arr[3] = (byte) ((i >> 24) & 0xff);
+            int length = i <= 0xff ? 1 : i <= 0xff_ff ? 2 : i <= 0xff_ff_ff ? 3 : 4;
+            checkByteLengthOfCodePoint(arr, arr.length);
+            checkByteLengthOfCodePoint(arr, length);
+            // if ((i & 0xffffff) == 0) {
+            // TTY.println("progress: " + Long.toHexString(i));
+            // }
+        }
+    }
+
+    private static void checkByteLengthOfCodePoint(byte[] arr, int length) {
+        int expected = jcodingsCodePointLength(arr, length);
+        int actual = asTString(arr, length).byteLengthOfCodePointUncached(0, UTF_8, TruffleString.ErrorHandling.RETURN_NEGATIVE);
+        Assert.assertEquals(expected, actual);
+    }
+
+    private static int jcodingsCodePointLength(byte[] arr, int length) {
+        final int width = UTF8Encoding.INSTANCE.length(arr, 0, length);
+        if (width <= length) {
+            return width;
+        } else {
+            return -1 - (width - length);
         }
     }
 
     @Test
     public void testCodePointLength1() {
-        byte[] arr = TStringTestUtil.byteArray(0xf4, 0x90, 0x80, 0x80, 0x7f, 0x7f);
-        TruffleString a = TruffleString.fromByteArrayUncached(arr, 0, arr.length, UTF_8, false);
+        byte[] arr = byteArray(0xf4, 0x90, 0x80, 0x80, 0x7f, 0x7f);
+        TruffleString a = asTString(arr);
         a.toString();
         Assert.assertEquals(6, a.codePointLengthUncached(UTF_8));
     }
 
     @Test
     public void testCodePointLength2() {
-        byte[] arr = TStringTestUtil.byteArray(0, 0, 0xc0, 0xbf);
-        TruffleString a = TruffleString.fromByteArrayUncached(arr, 0, arr.length, UTF_8, false);
+        byte[] arr = byteArray(0, 0, 0xc0, 0xbf);
+        TruffleString a = asTString(arr);
         Assert.assertEquals(4, a.codePointLengthUncached(UTF_8));
     }
 
@@ -167,5 +220,12 @@ public class TStringUTF8Tests extends TStringTestBase {
         TruffleString ts1 = TruffleString.fromJavaStringUncached("<......\u043c...", UTF_8);
         TruffleString ts2 = TruffleString.fromJavaStringUncached("<", UTF_8);
         Assert.assertEquals(0, ts1.lastIndexOfStringUncached(ts2, ts1.codePointLengthUncached(UTF_8), 0, UTF_8));
+    }
+
+    @Test
+    public void testIteratorPrev() {
+        TruffleStringIterator it = asTString(byteArray(' ', 'a', 'b', 'c', ' ', 0x80)).createBackwardCodePointIteratorUncached(UTF_8);
+        it.previousUncached();
+        Assert.assertEquals(5, it.getByteIndex());
     }
 }

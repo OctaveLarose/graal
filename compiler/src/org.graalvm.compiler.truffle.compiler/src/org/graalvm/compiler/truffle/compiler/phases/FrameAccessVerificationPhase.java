@@ -58,6 +58,7 @@ import org.graalvm.compiler.truffle.common.CompilableTruffleAST;
 import org.graalvm.compiler.truffle.compiler.PerformanceInformationHandler;
 import org.graalvm.compiler.truffle.compiler.TruffleTierContext;
 import org.graalvm.compiler.truffle.compiler.nodes.frame.NewFrameNode;
+import org.graalvm.compiler.truffle.compiler.nodes.frame.VirtualFrameAccessFlags;
 import org.graalvm.compiler.truffle.compiler.nodes.frame.VirtualFrameAccessType;
 import org.graalvm.compiler.truffle.compiler.nodes.frame.VirtualFrameAccessorNode;
 import org.graalvm.compiler.truffle.compiler.nodes.frame.VirtualFrameClearNode;
@@ -184,7 +185,7 @@ public final class FrameAccessVerificationPhase extends BasePhase<TruffleTierCon
             if (insertBefore.isAlive()) {
                 StructuredGraph graph = insertBefore.graph();
                 ConstantNode defaultForKind = ConstantNode.defaultForKind(NewFrameNode.asJavaKind(accessTag), graph);
-                graph.addBeforeFixed(insertBefore, graph.add(new VirtualFrameSetNode(frame, index, accessTag, defaultForKind, type, true)));
+                graph.addBeforeFixed(insertBefore, graph.add(new VirtualFrameSetNode(frame, index, accessTag, defaultForKind, type, VirtualFrameAccessFlags.NON_STATIC_NO_SET_TAG)));
             }
         }
     }
@@ -202,7 +203,6 @@ public final class FrameAccessVerificationPhase extends BasePhase<TruffleTierCon
 
     private static final class State implements Cloneable {
 
-        private final HashMap<NewFrameNode, byte[]> states = new HashMap<>();
         private final HashMap<NewFrameNode, byte[]> indexedStates = new HashMap<>();
         private final ArrayList<Effect> effects;
 
@@ -213,7 +213,6 @@ public final class FrameAccessVerificationPhase extends BasePhase<TruffleTierCon
         @Override
         public State clone() {
             State newState = new State(effects);
-            copy(states, newState.states);
             copy(indexedStates, newState.indexedStates);
             return newState;
         }
@@ -225,29 +224,17 @@ public final class FrameAccessVerificationPhase extends BasePhase<TruffleTierCon
         }
 
         public void add(NewFrameNode frame) {
-            assert !states.containsKey(frame) && !indexedStates.containsKey(frame);
-            byte[] entries = frame.getFrameSize() == 0 ? EMPTY_BYTE_ARRAY : frame.getFrameSlotKinds().clone();
-            states.put(frame, entries);
+            assert !indexedStates.containsKey(frame);
             byte[] indexedEntries = frame.getIndexedFrameSize() == 0 ? EMPTY_BYTE_ARRAY : frame.getIndexedFrameSlotKinds().clone();
             indexedStates.put(frame, indexedEntries);
         }
 
         public byte[] get(VirtualFrameAccessorNode accessor) {
-            boolean isLegacy = accessor.getType() == VirtualFrameAccessType.Legacy;
-            HashMap<NewFrameNode, byte[]> map = isLegacy ? states : indexedStates;
-            return map.get(accessor.getFrame());
+            return indexedStates.get(accessor.getFrame());
         }
 
         public boolean equalsState(State other) {
-            assert states.keySet().equals(other.states.keySet());
             assert indexedStates.keySet().equals(other.indexedStates.keySet());
-            for (Map.Entry<NewFrameNode, byte[]> entry : states.entrySet()) {
-                byte[] entries = entry.getValue();
-                byte[] otherEntries = other.states.get(entry.getKey());
-                if (!Arrays.equals(entries, otherEntries)) {
-                    return false;
-                }
-            }
             for (Map.Entry<NewFrameNode, byte[]> entry : indexedStates.entrySet()) {
                 byte[] entries = entry.getValue();
                 byte[] otherEntries = other.indexedStates.get(entry.getKey());
@@ -321,9 +308,9 @@ public final class FrameAccessVerificationPhase extends BasePhase<TruffleTierCon
         private State merge(AbstractMergeNode merge, List<State> states, ArrayList<Effect> firstEndEffects) {
             State result = states.get(0).clone();
             // determine the set of frames that are alive after this merge
-            HashSet<NewFrameNode> frames = new HashSet<>(result.states.keySet());
+            HashSet<NewFrameNode> frames = new HashSet<>(result.indexedStates.keySet());
             for (int i = 1; i < states.size(); i++) {
-                frames.retainAll(states.get(i).states.keySet());
+                frames.retainAll(states.get(i).indexedStates.keySet());
             }
 
             byte[] entries = new byte[states.size()];
@@ -331,19 +318,9 @@ public final class FrameAccessVerificationPhase extends BasePhase<TruffleTierCon
 
             for (NewFrameNode frame : frames) {
                 for (int i = 0; i < states.size(); i++) {
-                    entryArrays[i] = states.get(i).states.get(frame);
-                }
-                byte[] resultEntries = result.states.get(frame);
-                for (int entryIndex = 0; entryIndex < resultEntries.length; entryIndex++) {
-                    for (int i = 0; i < states.size(); i++) {
-                        entries[i] = entryArrays[i][entryIndex];
-                    }
-                    mergeEntries(merge, frame, resultEntries, entries, entryIndex, VirtualFrameAccessType.Legacy, firstEndEffects);
-                }
-                for (int i = 0; i < states.size(); i++) {
                     entryArrays[i] = states.get(i).indexedStates.get(frame);
                 }
-                resultEntries = result.indexedStates.get(frame);
+                byte[] resultEntries = result.indexedStates.get(frame);
                 for (int entryIndex = 0; entryIndex < resultEntries.length; entryIndex++) {
                     for (int i = 0; i < states.size(); i++) {
                         entries[i] = entryArrays[i][entryIndex];
@@ -352,7 +329,6 @@ public final class FrameAccessVerificationPhase extends BasePhase<TruffleTierCon
                 }
             }
 
-            result.states.keySet().retainAll(frames);
             result.indexedStates.keySet().retainAll(frames);
 
             return result;

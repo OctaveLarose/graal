@@ -24,7 +24,7 @@
  */
 package com.oracle.svm.core.jdk;
 
-import com.oracle.svm.core.annotate.NeverInline;
+import com.oracle.svm.core.NeverInline;
 import com.oracle.svm.core.annotate.Substitute;
 import com.oracle.svm.core.annotate.TargetClass;
 import com.oracle.svm.core.hub.DynamicHub;
@@ -35,7 +35,7 @@ final class Target_jdk_internal_reflect_Reflection {
 
     @Substitute
     @NeverInline("Starting a stack walk in the caller frame")
-    public static Class<?> getCallerClass() {
+    private static Class<?> getCallerClass() {
         return StackTraceUtils.getCallerClass(KnownIntrinsics.readCallerStackPointer(), true);
     }
 

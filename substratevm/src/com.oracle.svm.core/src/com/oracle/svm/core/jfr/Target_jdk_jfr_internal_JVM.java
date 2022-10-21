@@ -26,24 +26,24 @@ package com.oracle.svm.core.jfr;
 
 import java.util.List;
 
-import com.oracle.svm.core.jfr.traceid.JfrTraceId;
 import org.graalvm.nativeimage.ProcessProperties;
 
-import com.oracle.svm.core.SubstrateUtil;
+import com.oracle.svm.core.Containers;
 import com.oracle.svm.core.annotate.Alias;
 import com.oracle.svm.core.annotate.RecomputeFieldValue;
 import com.oracle.svm.core.annotate.Substitute;
 import com.oracle.svm.core.annotate.TargetClass;
 import com.oracle.svm.core.annotate.TargetElement;
 import com.oracle.svm.core.jdk.JDK11OrEarlier;
+import com.oracle.svm.core.jdk.JDK17OrEarlier;
 import com.oracle.svm.core.jdk.JDK17OrLater;
+import com.oracle.svm.core.jdk.JDK19OrLater;
+import com.oracle.svm.core.jfr.traceid.JfrTraceId;
 import com.oracle.svm.core.util.VMError;
 
 import jdk.jfr.Event;
-import jdk.jfr.internal.EventWriter;
 import jdk.jfr.internal.JVM;
 import jdk.jfr.internal.LogTag;
-import jdk.jfr.internal.handlers.EventHandler;
 
 @SuppressWarnings({"static-method", "unused"})
 @TargetClass(value = jdk.jfr.internal.JVM.class, onlyWith = HasJfrSupport.class)
@@ -136,7 +136,7 @@ public final class Target_jdk_jfr_internal_JVM {
     /** See {@link JVM#getThreadId}. */
     @Substitute
     public long getThreadId(Thread t) {
-        return SubstrateJVM.get().getThreadId(t);
+        return SubstrateJVM.getThreadId(t);
     }
 
     /** See {@link JVM#getTicksFrequency}. */
@@ -193,9 +193,17 @@ public final class Target_jdk_jfr_internal_JVM {
         SubstrateJVM.get().setMemorySize(size);
     }
 
-    /** See {@link JVM#setMethodSamplingInterval}. */
+    /** See {@code JVM#setMethodSamplingInterval}. */
     @Substitute
+    @TargetElement(onlyWith = JDK17OrEarlier.class)
     public void setMethodSamplingInterval(long type, long intervalMillis) {
+        SubstrateJVM.get().setMethodSamplingInterval(type, intervalMillis);
+    }
+
+    /** See {@code JVM#setMethodSamplingPeriod}. */
+    @Substitute
+    @TargetElement(onlyWith = JDK19OrLater.class)
+    public void setMethodSamplingPeriod(long type, long intervalMillis) {
         SubstrateJVM.get().setMethodSamplingInterval(type, intervalMillis);
     }
 
@@ -210,8 +218,8 @@ public final class Target_jdk_jfr_internal_JVM {
     public void setForceInstrumentation(boolean force) {
     }
 
-    /** See {@link JVM#setSampleThreads}. */
     @Substitute
+    @TargetElement(onlyWith = JDK17OrEarlier.class)
     public void setSampleThreads(boolean sampleThreads) throws IllegalStateException {
         SubstrateJVM.get().setSampleThreads(sampleThreads);
     }
@@ -290,8 +298,8 @@ public final class Target_jdk_jfr_internal_JVM {
     }
 
     @Substitute
-    @TargetElement(onlyWith = JDK17OrLater.class)
-    public boolean setHandler(Class<? extends jdk.internal.event.Event> eventClass, EventHandler handler) {
+    @TargetElement(onlyWith = {JDK17OrLater.class, JDK17OrEarlier.class})
+    public boolean setHandler(Class<? extends jdk.internal.event.Event> eventClass, Target_jdk_jfr_internal_handlers_EventHandler handler) {
         // eventHandler fields should all be set at compile time so this method
         // should never be reached at runtime
         throw VMError.shouldNotReachHere("eventHandler does not exist for: " + eventClass);
@@ -299,7 +307,7 @@ public final class Target_jdk_jfr_internal_JVM {
 
     /** See {@link SubstrateJVM#getHandler}. */
     @Substitute
-    @TargetElement(onlyWith = JDK17OrLater.class)
+    @TargetElement(onlyWith = {JDK17OrLater.class, JDK17OrEarlier.class})
     public Object getHandler(Class<? extends jdk.internal.event.Event> eventClass) {
         return SubstrateJVM.getHandler(eventClass);
     }
@@ -318,13 +326,13 @@ public final class Target_jdk_jfr_internal_JVM {
 
     /** See {@link JVM#newEventWriter}. */
     @Substitute
-    public static EventWriter newEventWriter() {
-        return SubstrateUtil.cast(SubstrateJVM.get().newEventWriter(), EventWriter.class);
+    public static Target_jdk_jfr_internal_EventWriter newEventWriter() {
+        return SubstrateJVM.get().newEventWriter();
     }
 
     /** See {@link JVM#flush}. */
     @Substitute
-    public static boolean flush(EventWriter writer, int uncommittedSize, int requestedSize) {
+    public static boolean flush(Target_jdk_jfr_internal_EventWriter writer, int uncommittedSize, int requestedSize) {
         return SubstrateJVM.get().flush(writer, uncommittedSize, requestedSize);
     }
 
@@ -332,6 +340,20 @@ public final class Target_jdk_jfr_internal_JVM {
     @Substitute
     public void setRepositoryLocation(String dirText) {
         SubstrateJVM.get().setRepositoryLocation(dirText);
+    }
+
+    /** See {@code JVM#setDumpPath(String)}. */
+    @Substitute
+    @TargetElement(onlyWith = JDK19OrLater.class)
+    public void setDumpPath(String dumpPathText) {
+        SubstrateJVM.get().setDumpPath(dumpPathText);
+    }
+
+    /** See {@code JVM#getDumpPath()}. */
+    @Substitute
+    @TargetElement(onlyWith = JDK19OrLater.class)
+    public String getDumpPath() {
+        return SubstrateJVM.get().getDumpPath();
     }
 
     /** See {@link JVM#abort}. */
@@ -351,6 +373,13 @@ public final class Target_jdk_jfr_internal_JVM {
     @Substitute
     public boolean setCutoff(long eventTypeId, long cutoffTicks) {
         return SubstrateJVM.get().setCutoff(eventTypeId, cutoffTicks);
+    }
+
+    @Substitute
+    @TargetElement(onlyWith = JDK17OrLater.class)
+    public boolean setThrottle(long eventTypeId, long eventSampleSize, long periodMs) {
+        // Not supported but this method is called during JFR startup, so we can't throw an error.
+        return true;
     }
 
     /** See {@link JVM#emitOldObjectSamples}. */
@@ -397,6 +426,38 @@ public final class Target_jdk_jfr_internal_JVM {
     public boolean isExcluded(Thread thread) {
         // Temporarily do nothing. This is used for JFR streaming.
         return false;
+    }
+
+    @Substitute
+    @TargetElement(onlyWith = JDK19OrLater.class) //
+    public boolean isExcluded(Class<? extends jdk.internal.event.Event> eventClass) {
+        // Temporarily always include.
+        return false;
+    }
+
+    @Substitute
+    @TargetElement(onlyWith = JDK19OrLater.class) //
+    public boolean setConfiguration(Class<? extends jdk.internal.event.Event> eventClass, Target_jdk_jfr_internal_event_EventConfiguration configuration) {
+        return SubstrateJVM.get().setConfiguration(eventClass, configuration);
+    }
+
+    @Substitute
+    @TargetElement(onlyWith = JDK19OrLater.class) //
+    public Object getConfiguration(Class<? extends jdk.internal.event.Event> eventClass) {
+        return SubstrateJVM.get().getConfiguration(eventClass);
+    }
+
+    @Substitute
+    @TargetElement(onlyWith = JDK19OrLater.class) //
+    public boolean isInstrumented(Class<? extends jdk.internal.event.Event> eventClass) {
+        // This should check for blessed commit methods in the event class [GR-41200]
+        return true;
+    }
+
+    @Substitute
+    @TargetElement(onlyWith = JDK19OrLater.class) //
+    public boolean isContainerized() {
+        return Containers.isContainerized();
     }
 
     @Substitute

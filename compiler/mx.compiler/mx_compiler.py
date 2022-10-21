@@ -36,7 +36,6 @@ import zipfile
 import tarfile
 import subprocess
 import tempfile
-import sys
 import csv
 
 import mx_truffle
@@ -48,7 +47,7 @@ from mx_gate import Task, Tags
 from mx import SafeDirectoryUpdater
 
 import mx_unittest
-from mx_unittest import unittest
+from mx_unittest import unittest, parse_split_args
 
 from mx_javamodules import as_java_module
 from mx_updategraalinopenjdk import updategraalinopenjdk
@@ -63,23 +62,7 @@ import argparse
 import shlex
 import json
 
-# Temporary imports and (re)definitions while porting mx from Python 2 to Python 3
-if sys.version_info[0] < 3:
-    from StringIO import StringIO
-    _unicode = unicode # pylint: disable=undefined-variable
-    def _decode(x):
-        return x
-    def _encode(x):
-        return x
-else:
-    from io import StringIO
-    _unicode = str
-    def _decode(x):
-        return x.decode()
-    def _encode(x):
-        return x.encode()
-
-_basestring = (str, _unicode)
+from io import StringIO
 
 _suite = mx.suite('compiler')
 
@@ -238,15 +221,16 @@ def _nodeCostDump(args, extraVMarguments=None):
     else:
         print(out.data)
 
-def _ctw_jvmci_export_args():
+def _ctw_jvmci_export_args(arg_prefix='--'):
     """
     Gets the VM args needed to export JVMCI API required by CTW.
     """
-    return ['--add-exports=java.base/jdk.internal.module=ALL-UNNAMED',
-            '--add-exports=jdk.internal.vm.ci/jdk.vm.ci.hotspot=ALL-UNNAMED',
-            '--add-exports=jdk.internal.vm.ci/jdk.vm.ci.meta=ALL-UNNAMED',
-            '--add-exports=jdk.internal.vm.ci/jdk.vm.ci.services=ALL-UNNAMED',
-            '--add-exports=jdk.internal.vm.ci/jdk.vm.ci.runtime=ALL-UNNAMED']
+    args = ['add-exports=java.base/jdk.internal.module=ALL-UNNAMED',
+            'add-exports=jdk.internal.vm.ci/jdk.vm.ci.hotspot=ALL-UNNAMED',
+            'add-exports=jdk.internal.vm.ci/jdk.vm.ci.meta=ALL-UNNAMED',
+            'add-exports=jdk.internal.vm.ci/jdk.vm.ci.services=ALL-UNNAMED',
+            'add-exports=jdk.internal.vm.ci/jdk.vm.ci.runtime=ALL-UNNAMED']
+    return [arg_prefix + arg for arg in args]
 
 def _ctw_system_properties_suffix():
     out = mx.OutputCapture()
@@ -327,7 +311,11 @@ class UnitTestRun:
                     # If this is a coverage execution, we want maximal coverage
                     # and thus must not fail fast.
                     extra_args += ['--fail-fast']
-                if t: unittest(['--suite', suite] + extra_args + self.args + _remove_empty_entries(extraVMarguments) + _remove_empty_entries(extraUnitTestArguments))
+                if t:
+                    tags = {'task' : t.title}
+                    unittest(['--suite', suite] + extra_args + self.args +
+                              _remove_empty_entries(extraVMarguments) +
+                              _remove_empty_entries(extraUnitTestArguments), test_report_tags=tags)
 
 class BootstrapTest:
     def __init__(self, name, args, tags, suppress=None):
@@ -335,11 +323,11 @@ class BootstrapTest:
         self.args = args
         self.suppress = suppress
         self.tags = tags
-        if tags is not None and (not isinstance(tags, list) or all(not isinstance(x, _basestring) for x in tags)):
+        if tags is not None and (not isinstance(tags, list) or all(not isinstance(x, str) for x in tags)):
             mx.abort("Gate tag argument must be a list of strings, tag argument:" + str(tags))
 
     def run(self, tasks, extraVMarguments=None):
-        with Task(self.name, tasks, tags=self.tags) as t:
+        with Task(self.name, tasks, tags=self.tags, report=True) as t:
             if t:
                 if self.suppress:
                     out = mx.DuplicateSuppressingStream(self.suppress).write
@@ -358,7 +346,9 @@ class GraalTags:
     benchmarktest = ['benchmarktest', 'fulltest']
     ctw = ['ctw', 'fulltest']
     ctweconomy = ['ctweconomy', 'economy', 'fulltest']
+    ctwphaseplanfuzzing = ['ctwphaseplanfuzzing']
     doc = ['javadoc']
+    phaseplan_fuzz_jtt_tests = ['phaseplan-fuzz-jtt-tests']
 
 def _remove_empty_entries(a):
     """Removes empty entries. Return value is always a list."""
@@ -479,7 +469,7 @@ def compiler_gate_runner(suites, unit_test_runs, bootstrap_tests, tasks, extraVM
     with Task('CheckCatchFiles', tasks, tags=[Tags.style]) as t:
         if t: _check_catch_files()
 
-    with Task('JDK_java_base_test', tasks, tags=['javabasetest']) as t:
+    with Task('JDK_java_base_test', tasks, tags=['javabasetest'], report=True) as t:
         if t: java_base_unittest(_remove_empty_entries(extraVMarguments) + [])
 
     # Run unit tests in hosted mode
@@ -510,14 +500,19 @@ def compiler_gate_runner(suites, unit_test_runs, bootstrap_tests, tasks, extraVM
         '-DCompileTheWorld.MultiThreaded=true', '-Dgraal.InlineDuringParsing=false', '-Dgraal.TrackNodeSourcePosition=true',
         '-DCompileTheWorld.Verbose=false', '-XX:ReservedCodeCacheSize=300m',
     ]
-    with Task('CTW:hosted', tasks, tags=GraalTags.ctw) as t:
+    ctw_phaseplan_fuzzing_flags = ['-DCompileTheWorld.FuzzPhasePlan=true', '-Dgraal.PrintGraphStateDiff=true']
+    with Task('CTW:hosted', tasks, tags=GraalTags.ctw, report=True) as t:
         if t:
             ctw(ctw_flags, _remove_empty_entries(extraVMarguments))
 
     # Also run ctw with economy mode as a separate task, to be able to filter it with tags
-    with Task('CTWEconomy:hosted', tasks, tags=GraalTags.ctweconomy) as t:
+    with Task('CTWEconomy:hosted', tasks, tags=GraalTags.ctweconomy, report=True) as t:
         if t:
             ctw(ctw_flags + _graalEconomyFlags, _remove_empty_entries(extraVMarguments))
+
+    with Task('CTWPhaseplanFuzzing:hosted', tasks, tags=GraalTags.ctwphaseplanfuzzing, report=True) as t:
+        if t:
+            ctw(ctw_flags + ctw_phaseplan_fuzzing_flags, _remove_empty_entries(extraVMarguments))
 
     # bootstrap tests
     for b in bootstrap_tests:
@@ -530,6 +525,10 @@ def compiler_gate_runner(suites, unit_test_runs, bootstrap_tests, tasks, extraVM
         else:
             # metadata package was deprecated, exclude it
             if t: mx.javadoc(['--exclude-packages', 'com.oracle.truffle.dsl.processor.java'], quietForNoPackages=True)
+
+    with Task('JTTPhaseplanFuzzing', tasks, tags=GraalTags.phaseplan_fuzz_jtt_tests, report=True) as t:
+        if t:
+            phaseplan_fuzz_jtt_tests([], extraVMarguments=_remove_empty_entries(extraVMarguments), extraUnitTestArguments=_remove_empty_entries(extraUnitTestArguments))
 
 def compiler_gate_benchmark_runner(tasks, extraVMarguments=None, prefix=''):
     # run DaCapo benchmarks #
@@ -555,8 +554,15 @@ def compiler_gate_benchmark_runner(tasks, extraVMarguments=None, prefix=''):
     dacapo_gate_iterations.update({'tradesoap': -1})
     for name in dacapo_suite.benchmarkList(bmSuiteArgs):
         iterations = dacapo_gate_iterations.get(name, -1)
-        with Task(prefix + 'DaCapo:' + name, tasks, tags=GraalTags.benchmarktest) as t:
+        with Task(prefix + 'DaCapo:' + name, tasks, tags=GraalTags.benchmarktest, report=True) as t:
             if t: _gate_dacapo(name, iterations, benchVmArgs + ['-Dgraal.TrackNodeSourcePosition=true'] + dacapo_esa)
+
+    # ensure we can also run on C2
+    with Task(prefix + 'DaCapo_C2:fop', tasks, tags=GraalTags.test, report=True) as t:
+        if t:
+            # Strip JVMCI args from C2 execution which uses -XX:-EnableJVMCI
+            c2BenchVmArgs = [a for a in benchVmArgs if 'JVMCI' not in a]
+            _gate_dacapo('fop', 1, ['--jvm-config', 'default'] + c2BenchVmArgs)
 
     # run Scala DaCapo benchmarks #
     ###############################
@@ -566,13 +572,13 @@ def compiler_gate_benchmark_runner(tasks, extraVMarguments=None, prefix=''):
     }
     for name in scala_dacapo_suite.benchmarkList(bmSuiteArgs):
         iterations = scala_dacapo_gate_iterations.get(name, -1)
-        with Task(prefix + 'ScalaDaCapo:' + name, tasks, tags=GraalTags.benchmarktest) as t:
+        with Task(prefix + 'ScalaDaCapo:' + name, tasks, tags=GraalTags.benchmarktest, report=True) as t:
             if t: _gate_scala_dacapo(name, iterations, benchVmArgs + ['-Dgraal.TrackNodeSourcePosition=true'] + dacapo_esa)
 
     # run benchmark with non default setup #
     ########################################
     # ensure -Xbatch still works
-    with Task(prefix + 'DaCapo_pmd:BatchMode', tasks, tags=GraalTags.test) as t:
+    with Task(prefix + 'DaCapo_pmd:BatchMode', tasks, tags=GraalTags.test, report=True) as t:
         if t: _gate_dacapo('pmd', 1, benchVmArgs + ['-Xbatch'])
 
     # ensure benchmark counters still work but omit this test on
@@ -581,7 +587,7 @@ def compiler_gate_benchmark_runner(tasks, extraVMarguments=None, prefix=''):
     out = mx.OutputCapture()
     mx.run([jdk.java, '-version'], err=subprocess.STDOUT, out=out)
     if 'fastdebug' not in out.data:
-        with Task(prefix + 'DaCapo_pmd:BenchmarkCounters', tasks, tags=GraalTags.test) as t:
+        with Task(prefix + 'DaCapo_pmd:BenchmarkCounters', tasks, tags=GraalTags.test, report=True) as t:
             if t:
                 fd, logFile = tempfile.mkstemp()
                 os.close(fd) # Don't leak file descriptors
@@ -602,11 +608,11 @@ def compiler_gate_benchmark_runner(tasks, extraVMarguments=None, prefix=''):
                     os.remove(logFile)
 
     # ensure -Xcomp still works
-    with Task(prefix + 'XCompMode:product', tasks, tags=GraalTags.test) as t:
+    with Task(prefix + 'XCompMode:product', tasks, tags=GraalTags.test, report=True) as t:
         if t: run_vm(_remove_empty_entries(extraVMarguments) + ['-XX:+UseJVMCICompiler', '-Xcomp', '-version'])
 
     # ensure -XX:+PreserveFramePointer  still works
-    with Task(prefix + 'DaCapo_pmd:PreserveFramePointer', tasks, tags=GraalTags.test) as t:
+    with Task(prefix + 'DaCapo_pmd:PreserveFramePointer', tasks, tags=GraalTags.test, report=True) as t:
         if t: _gate_dacapo('pmd', default_iterations, benchVmArgs + ['-Xmx256M', '-XX:+PreserveFramePointer'], threads=4, force_serial_gc=False, set_start_heap_size=False)
 
 graal_unit_test_runs = [
@@ -624,7 +630,7 @@ _defaultFlags = ['-Dgraal.CompilationWatchDogStartDelay=60.0D']
 _assertionFlags = ['-esa', '-Dgraal.DetailedAsserts=true']
 _graalErrorFlags = _compiler_error_options()
 _graalEconomyFlags = ['-Dgraal.CompilerConfiguration=economy']
-_verificationFlags = ['-Dgraal.VerifyGraalGraphs=true', '-Dgraal.VerifyGraalGraphEdges=true', '-Dgraal.VerifyGraalPhasesSize=true', '-Dgraal.VerifyPhases=true']
+_verificationFlags = ['-Dgraal.VerifyGraalGraphs=true', '-Dgraal.VerifyGraalGraphEdges=true', '-Dgraal.VerifyGraalPhasesSize=true']
 _coopFlags = ['-XX:-UseCompressedOops']
 _gcVerificationFlags = ['-XX:+UnlockDiagnosticVMOptions', '-XX:+VerifyBeforeGC', '-XX:+VerifyAfterGC']
 _g1VerificationFlags = ['-XX:-UseSerialGC', '-XX:+UseG1GC']
@@ -1120,7 +1126,7 @@ class GraalArchiveParticipant:
                 pass
             else:
                 provider = m.group(2)
-                for service in _decode(contents_supplier()).strip().split(os.linesep):
+                for service in (contents_supplier()).decode().strip().split(os.linesep):
                     assert service
                     version = m.group(1)
                     add_serviceprovider(service, provider, version)
@@ -1186,6 +1192,51 @@ def javadoc(args):
         args.append('--exclude-packages')
         args.append('com.oracle.truffle.api.metadata')
     mx.javadoc(args, quietForNoPackages=True)
+
+def phaseplan_fuzz_jtt_tests(args, extraVMarguments=None, extraUnitTestArguments=None):
+    """runs JTT unit tests with fuzzed compilation plans"""
+
+    parser = ArgumentParser(prog='mx phaseplan-fuzz-jtt-tests', description='Run JTT unit tests with fuzzed phase plans')
+    parser.add_argument('--seed', metavar='<seed>', help='Seed to initialize random instance')
+    parser.add_argument('--minimal', action='store_true',
+        help='Force the use of a minimal fuzzed compilation plan')
+    parser.add_argument('--skip-phase-odds', dest='skip_phase_odds', metavar='<int>',
+        help='Determine the odds of skipping the insertion of a phase in the fuzzed phase plan')
+    parser.add_argument('--high-tier-skip-phase', dest='high_tier_skip_phase', metavar='<int>',
+        help='Determine the odds of skipping the insertion of a phase in high tier')
+    parser.add_argument('--mid-tier-skip-phase', dest='mid_tier_skip_phase', metavar='<int>',
+        help='Determine the odds of skipping the insertion of a phase in mid tier')
+    parser.add_argument('--low-tier-skip-phase', dest='low_tier_skip_phase', metavar='<int>',
+        help='Determine the odds of skipping the insertion of a phase in low tier')
+
+    args, parsed_args = parse_split_args(args, parser, "--")
+    vm_args = _remove_empty_entries(extraVMarguments) + ['-Dtest.graal.compilationplan.fuzzing=true', '-Dgraal.PrintGraphStateDiff=true', '--verbose']
+
+    if parsed_args.seed:
+        vm_args.append('-Dtest.graal.compilationplan.fuzzing.seed=' + parsed_args.seed)
+    if parsed_args.minimal:
+        vm_args.append('-Dtest.graal.compilationplan.fuzzing.minimal=true')
+    if parsed_args.skip_phase_odds:
+        vm_args.append('-Dtest.graal.skip.phase.insertion.odds=' + parsed_args.skip_phase_odds)
+    if parsed_args.high_tier_skip_phase:
+        vm_args.append('-Dtest.graal.skip.phase.insertion.odds.high.tier=' + parsed_args.high_tier_skip_phase)
+    if parsed_args.mid_tier_skip_phase:
+        vm_args.append('-Dtest.graal.skip.phase.insertion.odds.mid.tier=' + parsed_args.mid_tier_skip_phase)
+    if parsed_args.low_tier_skip_phase:
+        vm_args.append('-Dtest.graal.skip.phase.insertion.odds.low.tier=' + parsed_args.low_tier_skip_phase)
+
+    target_tests = []
+    for arg in args:
+        if not arg.startswith('-'):
+            target_tests.append(arg)
+            args.remove(arg)
+    if not target_tests:
+        target_tests = ['org.graalvm.compiler.jtt.']
+
+    for test in target_tests:
+        UnitTestRun("Fuzz phase plan for tests matching substring " + test, [], tags=GraalTags.unittest + GraalTags.phaseplan_fuzz_jtt_tests).\
+            run(['compiler'], [], ['-XX:-UseJVMCICompiler'] + vm_args, _remove_empty_entries(extraUnitTestArguments) + args + [test])
+
 
 def create_archive(srcdir, arcpath, prefix):
     """
@@ -1332,6 +1383,12 @@ def print_graaljdk_config(args):
     """print the GraalJDK config"""
     mx_sdk_vm_impl.graalvm_show([], _graaljdk_dist(_parse_graaljdk_edition('Print the GraalJDK config', args)))
 
+def profdiff(args):
+    """compare the optimization log of hot compilation units of two experiments"""
+    cp = mx.classpath('GRAAL_PROFDIFF', jdk=jdk)
+    vm_args = ['-cp', cp, 'org.graalvm.profdiff.Profdiff'] + args
+    return jdk.run_java(args=vm_args)
+
 mx.update_commands(_suite, {
     'sl' : [sl, '[SL args|@VM options]'],
     'vm': [run_vm_with_jvmci_compiler, '[-options] class [args...]'],
@@ -1345,6 +1402,8 @@ mx.update_commands(_suite, {
     'makegraaljdk': [makegraaljdk_cli, '[options]'],
     'graaljdk-home': [print_graaljdk_home, '[options]'],
     'graaljdk-show': [print_graaljdk_config, '[options]'],
+    'phaseplan-fuzz-jtt-tests': [phaseplan_fuzz_jtt_tests, "Runs JTT's unit tests with fuzzed phase plans."],
+    'profdiff': [profdiff, '[options] proftool_output1 optimization_log1 proftool_output2 optimization_log2'],
 })
 
 def mx_post_parse_cmd_line(opts):
