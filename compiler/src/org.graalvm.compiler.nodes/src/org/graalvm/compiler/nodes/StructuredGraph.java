@@ -341,6 +341,8 @@ public final class StructuredGraph extends Graph implements JavaMethodContext {
 
     public static List<ResolvedJavaMethod> executeLongList = new ArrayList<>();
 
+    public static List<ResolvedJavaMethod> executeDoubleList = new ArrayList<>();
+
     private OptimizationLog optimizationLog;
 
     private StructuredGraph(String name,
@@ -363,9 +365,11 @@ public final class StructuredGraph extends Graph implements JavaMethodContext {
         this.rootMethod = method;
 
         if (method != null && !method.getClass().getName().contains("PointsToAnalysisMethod")
-                && method.getDeclaringClass().getName().startsWith("Ltrufflesom")
-                && method.getName().equals("executeLong")) {
-            executeLongList.add(method);
+                && method.getDeclaringClass().getName().startsWith("Ltrufflesom")) {
+            if (method.getName().equals("executeLong"))
+                executeLongList.add(method);
+            else if (method.getName().equals("executeDouble"))
+                executeDoubleList.add(method);
         }
 
         if (isMethod(method, "Ltrufflesom/interpreter/nodes/LocalVariableV2NodeFactory$LocalVariableWriteV2NodeGen;", "executeGeneric")) {

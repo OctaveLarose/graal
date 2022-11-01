@@ -79,13 +79,14 @@ public final class SupernodePhase extends AbstractInliningPhase {
 
             var supernodeAnnot = klass.getAnnotation(GraalDirectives.Supernode.class);
             var resolvedSupernodeMethods = getResolvedJavaMethodsFromSupernode(supernodeAnnot);
+            var methodName = supernodeAnnot.methodsName();
 
             // fetching graphs for each children (for now only one)
             var supernodeChildrenGraphs = new StructuredGraph[] {parseGraph(context, graph, resolvedSupernodeMethods.getLeft().get(0))};
 
             for (var supernodeChildGraph: supernodeChildrenGraphs) {
                 var replacementsList = resolvedSupernodeMethods.getRight();
-                replaceExecuteCallsWithDirect(context, supernodeChildGraph, replacementsList);
+                replaceExecuteCallsWithDirect(context, supernodeChildGraph, replacementsList, methodName);
 
                 for (Node node: graph.getNodes()) {
                     if (!(node instanceof Invoke))
@@ -93,10 +94,10 @@ public final class SupernodePhase extends AbstractInliningPhase {
                     Invoke invoke = (Invoke) node;
                     ResolvedJavaMethod targetMethod = invoke.getTargetMethod();
 
-                    if (targetMethod.getName().equals("executeLong")) {
+                    if (targetMethod.getName().equals(methodName)) {
                         InliningUtil.inline(invoke, supernodeChildGraph, false, resolvedSupernodeMethods.getLeft().get(0));
-                        System.out.println("REPLACEMENT DONE for executeLong in parent graph (" +
-                                graph.method().getDeclaringClass() + graph.method().getName() + ")");
+                        System.out.println("REPLACEMENT DONE for " + methodName + " in parent graph (" +
+                                graph.method().getDeclaringClass().getName() + graph.method().getName() + ")");
                         break;
                     }
                 }
@@ -116,7 +117,7 @@ public final class SupernodePhase extends AbstractInliningPhase {
 
         List<ResolvedJavaMethod> childrenMethods = new ArrayList<>();
         for (var child: children) {
-            var meth = getMethodFromClass(child);
+            var meth = getMethodFromClass(child, supernode.methodsName());
             if (meth == null)
                 System.out.println("no method found for " + child.getName());
             childrenMethods.add(meth);
@@ -124,7 +125,7 @@ public final class SupernodePhase extends AbstractInliningPhase {
 
         List<ResolvedJavaMethod> replacementsList = new ArrayList<>();
         for (var child: replacements) {
-            var meth = getMethodFromClass(child);
+            var meth = getMethodFromClass(child, supernode.methodsName());
             if (meth == null)
                 System.out.println("no method found for " + child.getName());
             replacementsList.add(meth);
@@ -133,22 +134,34 @@ public final class SupernodePhase extends AbstractInliningPhase {
         return Pair.create(childrenMethods, replacementsList);
     }
 
-    ResolvedJavaMethod getMethodFromClass(Class<?> klass) {
+    ResolvedJavaMethod getMethodFromClass(Class<?> klass, String methodName) {
         ResolvedJavaMethod correctMethod = null;
         String className = klass.getName();
 
-        // copying because apparently we get concurrent modification errors otherwise? which is very weird?
-        var copiedList = new ArrayList<>(StructuredGraph.executeLongList);
-        for (var executeLong: copiedList) {
-            var type = executeLong.getDeclaringClass();
-            if (type.toString().contains(className))
-                correctMethod = executeLong;
-        }
+        if (methodName.equals("executeLong")) {
+            // copying because apparently we get concurrent modification errors otherwise? which is very weird?
+            var copiedList = new ArrayList<>(StructuredGraph.executeLongList);
+            for (var executeLong : copiedList) {
+                var type = executeLong.getDeclaringClass();
+                if (type.toString().contains(className))
+                    correctMethod = executeLong;
+            }
+
+        } else if (methodName.equals("executeDouble")) {
+            var copiedList2 = new ArrayList<>(StructuredGraph.executeDoubleList);
+            for (var executeDouble : copiedList2) {
+                var type = executeDouble.getDeclaringClass();
+                if (type.toString().contains(className))
+                    correctMethod = executeDouble;
+            }
+        } else
+            throw new UnsupportedOperationException("can't currently replace any other method than an executeLong or executeDouble");
 
         return correctMethod;
     }
 
-    private StructuredGraph replaceExecuteCallsWithDirect(HighTierContext context, StructuredGraph inlineGraph, List<ResolvedJavaMethod> replacementsList) {
+    private StructuredGraph replaceExecuteCallsWithDirect(HighTierContext context, StructuredGraph inlineGraph,
+                                                          List<ResolvedJavaMethod> replacementsList, String methodName) {
         inlineGraph.getDebug().forceDump(inlineGraph, "before our changes");
 
         for (Node node: inlineGraph.getNodes()) {
@@ -157,7 +170,7 @@ public final class SupernodePhase extends AbstractInliningPhase {
             Invoke invoke = (Invoke) node;
             ResolvedJavaMethod targetMethod = invoke.getTargetMethod();
 
-            if (!targetMethod.getName().equals("executeLong")) {
+            if (!targetMethod.getName().equals(methodName)) {
                 continue;
             }
 
