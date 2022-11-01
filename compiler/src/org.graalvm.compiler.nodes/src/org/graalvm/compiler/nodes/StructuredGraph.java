@@ -372,6 +372,10 @@ public final class StructuredGraph extends Graph implements JavaMethodContext {
             this.isSupernodeTarget = true;
         }
 
+        if (isMethod(method, "Ltrufflesom/interpreter/nodes/LocalVariableV3NodeFactory$LocalVariableWriteV3NodeGen;", "executeGeneric")) {
+            this.isSupernodeTarget = true;
+        }
+
         this.graphId = uniqueGraphIds.incrementAndGet();
         this.compilationId = compilationId;
         this.entryBCI = entryBCI;

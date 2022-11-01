@@ -73,7 +73,7 @@ public final class SupernodePhase extends AbstractInliningPhase {
     @Override
     protected void run(StructuredGraph graph, HighTierContext context) {
         if (graph.isSupernodeTarget) {
-            System.out.println("replacement started");
+            System.out.println("replacement started for target " + graph.method().getDeclaringClass() + graph.method().getName());
             graph.getDebug().forceDump(graph, "parent graph pre replacements");
             var klass = graph.method().getDeclaringClass().getSuperclass();
 
@@ -95,7 +95,8 @@ public final class SupernodePhase extends AbstractInliningPhase {
 
                     if (targetMethod.getName().equals("executeLong")) {
                         InliningUtil.inline(invoke, supernodeChildGraph, false, resolvedSupernodeMethods.getLeft().get(0));
-                        System.out.println("REPLACEMENT DONE for executeLong in parent graph");
+                        System.out.println("REPLACEMENT DONE for executeLong in parent graph (" +
+                                graph.method().getDeclaringClass() + graph.method().getName() + ")");
                         break;
                     }
                 }
