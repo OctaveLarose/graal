@@ -343,6 +343,8 @@ public final class StructuredGraph extends Graph implements JavaMethodContext {
 
     public static List<ResolvedJavaMethod> executeDoubleList = new ArrayList<>();
 
+    public static ResolvedJavaMethod MULTPRIM_executeDouble_double_double10;
+
     private OptimizationLog optimizationLog;
 
     private StructuredGraph(String name,
@@ -376,8 +378,16 @@ public final class StructuredGraph extends Graph implements JavaMethodContext {
             this.isSupernodeTarget = true;
         }
 
-        if (isMethod(method, "Ltrufflesom/interpreter/nodes/LocalVariableV3NodeFactory$LocalVariableWriteV3NodeGen;", "executeGeneric")) {
-            this.isSupernodeTarget = true;
+//        if (isMethod(method, "Ltrufflesom/interpreter/nodes/LocalVariableV3NodeFactory$LocalVariableWriteV3NodeGen;", "executeDouble")) {
+//            this.isSupernodeTarget = true;
+//        }
+
+        if (method != null && method.getDeclaringClass().getName().equals("Ltrufflesom/primitives/arithmetic/MultiplicationPrimFactory$MultiplicationPrimNodeGen;")) {
+            for (var classMethod: method.getDeclaringClass().getDeclaredMethods()) {
+                if (classMethod.getName().equals("executeDouble_double_double10")) {
+                    MULTPRIM_executeDouble_double_double10 = method;
+                }
+            }
         }
 
         this.graphId = uniqueGraphIds.incrementAndGet();

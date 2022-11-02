@@ -72,38 +72,46 @@ public final class SupernodePhase extends AbstractInliningPhase {
 
     @Override
     protected void run(StructuredGraph graph, HighTierContext context) {
-        if (graph.isSupernodeTarget) {
-            System.out.println("replacement started for target " + graph.method().getDeclaringClass() + graph.method().getName());
-            graph.getDebug().forceDump(graph, "parent graph pre replacements");
-            var klass = graph.method().getDeclaringClass().getSuperclass();
+        if ((graph.method().getDeclaringClass().getAnnotation(GraalDirectives.Supernode.class) == null &&
+                (graph.method().getDeclaringClass().getSuperclass() != null && graph.method().getDeclaringClass().getSuperclass().getAnnotation(GraalDirectives.Supernode.class) == null))
+        ) {
+            return;
+        }
 
-            var supernodeAnnot = klass.getAnnotation(GraalDirectives.Supernode.class);
-            var resolvedSupernodeMethods = getResolvedJavaMethodsFromSupernode(supernodeAnnot);
-            var methodName = supernodeAnnot.methodsName();
+        if (!graph.method().getName().equals("executeGeneric"))
+            return;
 
-            // fetching graphs for each children (for now only one)
-            var supernodeChildrenGraphs = new StructuredGraph[] {parseGraph(context, graph, resolvedSupernodeMethods.getLeft().get(0))};
+        System.out.println("replacement started for target " + graph.method().getDeclaringClass().getName() + graph.method().getName());
+        graph.getDebug().forceDump(graph, "parent graph pre replacements");
+        var klass = graph.method().getDeclaringClass().getSuperclass();
 
-            for (var supernodeChildGraph: supernodeChildrenGraphs) {
-                var replacementsList = resolvedSupernodeMethods.getRight();
-                replaceExecuteCallsWithDirect(context, supernodeChildGraph, replacementsList, methodName);
+        var supernodeAnnot = klass.getAnnotation(GraalDirectives.Supernode.class);
+        var resolvedSupernodeMethods = getResolvedJavaMethodsFromSupernode(supernodeAnnot);
+        var methodName = supernodeAnnot.methodsName();
 
-                for (Node node: graph.getNodes()) {
-                    if (!(node instanceof Invoke))
-                        continue;
-                    Invoke invoke = (Invoke) node;
-                    ResolvedJavaMethod targetMethod = invoke.getTargetMethod();
+        // fetching graphs for each children (for now only one)
+        StructuredGraph[] supernodeChildrenGraphs = new StructuredGraph[] {parseGraph(context, graph, resolvedSupernodeMethods.getLeft().get(0))};
 
-                    if (targetMethod.getName().equals(methodName)) {
-                        InliningUtil.inline(invoke, supernodeChildGraph, false, resolvedSupernodeMethods.getLeft().get(0));
-                        System.out.println("REPLACEMENT DONE for " + methodName + " in parent graph (" +
-                                graph.method().getDeclaringClass().getName() + graph.method().getName() + ")");
-                        break;
-                    }
+        for (var supernodeChildGraph: supernodeChildrenGraphs) {
+            var replacementsList = resolvedSupernodeMethods.getRight();
+            replaceExecuteCallsWithDirect(context, supernodeChildGraph, replacementsList, methodName);
+
+            for (Node node: graph.getNodes()) {
+                if (!(node instanceof Invoke))
+                    continue;
+                Invoke invoke = (Invoke) node;
+                ResolvedJavaMethod targetMethod = invoke.getTargetMethod();
+
+                if (targetMethod.getName().equals(methodName)) {
+                    InliningUtil.inline(invoke, supernodeChildGraph, false, resolvedSupernodeMethods.getLeft().get(0));
+                    System.out.println("REPLACEMENT DONE for " + methodName + " in parent graph (" +
+                            graph.method().getDeclaringClass().getName() + graph.method().getName() + ")");
+                    break;
                 }
             }
-            graph.getDebug().forceDump(graph, "parent graph post replacements");
         }
+
+        graph.getDebug().forceDump(graph, "parent graph post replacements");
     }
 
     protected StructuredGraph parseGraph(HighTierContext context, StructuredGraph graph, ResolvedJavaMethod method) {
@@ -111,13 +119,25 @@ public final class SupernodePhase extends AbstractInliningPhase {
     }
 
 
+    /**
+     * @param supernode The supernode annotation
+     * @return A pair containing:
+     * A) the methods of all the children of the root node (currently only one),
+     * B) the methods of all the grandchildren through that first child node.
+     */
     Pair<List<ResolvedJavaMethod>, List<ResolvedJavaMethod>> getResolvedJavaMethodsFromSupernode(GraalDirectives.Supernode supernode) {
         var children = supernode.forChildren();
         var replacements = supernode.replaceChildWith();
 
         List<ResolvedJavaMethod> childrenMethods = new ArrayList<>();
         for (var child: children) {
-            var meth = getMethodFromClass(child, supernode.methodsName());
+            ResolvedJavaMethod meth;
+
+            if (supernode.methodsName().equals("executeDouble"))
+                meth = StructuredGraph.MULTPRIM_executeDouble_double_double10;
+            else
+                meth = getMethodFromClass(child, supernode.methodsName());
+
             if (meth == null)
                 System.out.println("no method found for " + child.getName());
             childrenMethods.add(meth);
@@ -164,6 +184,11 @@ public final class SupernodePhase extends AbstractInliningPhase {
                                                           List<ResolvedJavaMethod> replacementsList, String methodName) {
         inlineGraph.getDebug().forceDump(inlineGraph, "before our changes");
 
+        int nbrReplacements = 0;
+
+//        if (methodName.equals("executeDouble"))
+//            System.out.println("bp");
+
         for (Node node: inlineGraph.getNodes()) {
             if (!(node instanceof Invoke))
                 continue;
@@ -171,6 +196,8 @@ public final class SupernodePhase extends AbstractInliningPhase {
             ResolvedJavaMethod targetMethod = invoke.getTargetMethod();
 
             if (!targetMethod.getName().equals(methodName)) {
+//                if (methodName.equals("executeDouble"))
+//                    System.out.println("invalid method, was " + targetMethod.getName());
                 continue;
             }
 
@@ -186,6 +213,7 @@ public final class SupernodePhase extends AbstractInliningPhase {
 
             // we can check if the field has the @Child annotation instead maybe
             if (!fieldName.equals("receiver_") && !fieldName.equals("argument_")) {
+//                System.out.println("field wasn't valid as it was named " + fieldName);
                 continue;
             }
 
@@ -215,10 +243,13 @@ public final class SupernodePhase extends AbstractInliningPhase {
 //            inlineGraph.removeFixed((FixedWithNextNode) node);
             inlineGraph.getDebug().forceDump(inlineGraph, "graph post inlining");
 
+            nbrReplacements++;
             System.out.println("Successful replacement and inlining from " + targetMethod.getName()
                     + " in (" + inlineGraph.method().getDeclaringClass().getName() + inlineGraph.method().getName() + ")"
                     + " to " + overrideMethod.getDeclaringClass().getName() + overrideMethod.getName());
         }
+
+        System.out.println(nbrReplacements + " calls successfully replaced.");
 
         new DeadCodeEliminationPhase(Optional).apply(inlineGraph);
         canonicalizer.apply(inlineGraph, context);
